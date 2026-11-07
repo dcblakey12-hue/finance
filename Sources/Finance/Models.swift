@@ -187,9 +187,12 @@ struct ForecastEvent: Identifiable {
     let isTransfer: Bool
     let gross: Double
     let detail: String?     // e.g. "Checking → Visa"
+    /// The scheduled transaction (RecurringBill.id) this event comes from, when there is one.
+    let billId: UUID?
 
     init(date: Date, name: String, amount: Double, isIncome: Bool, category: String,
-         isTransfer: Bool = false, gross: Double? = nil, detail: String? = nil) {
+         isTransfer: Bool = false, gross: Double? = nil, detail: String? = nil, billId: UUID? = nil) {
+        self.billId = billId
         self.id = UUID(); self.date = date; self.name = name
         self.amount = amount; self.isIncome = isIncome; self.category = category
         self.isTransfer = isTransfer; self.gross = gross ?? abs(amount); self.detail = detail

@@ -10,6 +10,9 @@ struct CalendarView: View {
     @Query var customCategories: [CustomCategory]
     @Environment(\.modelContext) private var context
     @State private var editor: ScheduleEditor?
+    @State private var listDay: Date?
+    @State private var entering: EntryTarget?
+    @State private var listSelection: UUID?
     @State private var calService = CalendarService()
     @State private var month = Date()
     @State private var selected: Date?
@@ -73,6 +76,15 @@ struct CalendarView: View {
         }
         .navigationTitle("Bills & Calendar")
         .task { await calService.requestAccess() }
+        .sheet(isPresented: Binding(get: { listDay != nil }, set: { if !$0 { listDay = nil } })) {
+            if let d = listDay { dayListSheet(d) }
+        }
+        .sheet(item: $entering) { target in
+            EnterScheduledSheet(bill: target.bill, occurrenceOverride: target.date, accounts: accounts) { message in
+                entering = nil
+                if let message { status = message }
+            }
+        }
         .sheet(item: $editor) { ed in
             ScheduleEditorSheet(editor: ed, categories: categories, accounts: accountChoices) { result in
                 ScheduleEditor.save(result, existing: ed.existing, in: context)
@@ -165,11 +177,73 @@ struct CalendarView: View {
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(isSelected ? Color.accentColor : .clear, lineWidth: 2))
         .opacity(day.inMonth ? 1 : 0.5)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { selected = day.date; newSchedule(on: day.date) }
-        .onTapGesture { selected = day.date }
+        .onTapGesture(count: 2) {
+            selected = day.date
+            if day.events.isEmpty { newSchedule(on: day.date) } else { listDay = day.date }
+        }
+        .onTapGesture {
+            selected = day.date
+            if !day.events.isEmpty { listDay = day.date }
+        }
     }
 
-    /// Double-click a day: open the Schedule Transaction window with that date filled in.
+    /// Click a day with transactions: a box listing them. Double-click a row to enter / amend / skip it.
+    private func dayListSheet(_ date: Date) -> some View {
+        let events = days.first { calendar.isDate($0.date, inSameDayAs: date) }?.events ?? []
+        let rows: [(UUID, ForecastEvent)] = events.compactMap { e in e.billId.map { ($0, e) } }
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(date.formatted(date: .complete, time: .omitted)).font(.headline)
+            Text("Double-click a row to enter it (amend the amount or date) or skip it.")
+                .font(.caption).foregroundStyle(.secondary)
+            List(selection: $listSelection) {
+                ForEach(rows, id: \.0) { (billId, e) in
+                    HStack {
+                        Text(e.name)
+                        Text(e.detail ?? e.category).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text(money(e.isTransfer ? e.gross : e.amount)).monospacedDigit()
+                            .foregroundStyle(e.isIncome ? .green : (e.isTransfer ? .blue : .primary))
+                    }
+                    .tag(billId)
+                    .contentShape(Rectangle())
+                }
+            }
+            .frame(minHeight: 160)
+            .contextMenu(forSelectionType: UUID.self) { ids in
+                if let bill = bill(for: ids) {
+                    Button("Enter or Skip…") { openEntry(bill, on: date) }
+                    Button("Edit Schedule…") { openEditor(bill) }
+                }
+            } primaryAction: { ids in
+                if let bill = bill(for: ids) { openEntry(bill, on: date) }
+            }
+            HStack {
+                Button("New Scheduled Transaction…") { listDay = nil; newSchedule(on: date) }
+                Spacer()
+                Button("Done") { listDay = nil }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+
+    private func bill(for ids: Set<UUID>) -> RecurringBill? {
+        guard ids.count == 1, let id = ids.first else { return nil }
+        return bills.first { $0.id == id }
+    }
+    private func openEntry(_ bill: RecurringBill, on date: Date) {
+        listDay = nil
+        entering = EntryTarget(bill: bill, date: date)
+    }
+    private func openEditor(_ bill: RecurringBill) {
+        listDay = nil
+        editor = ScheduleEditor(existing: bill, draft: ScheduleDraft(
+            name: bill.name, amount: abs(bill.amount), dueDay: bill.dueDay, category: bill.category, isIncome: bill.isIncome,
+            isActive: bill.isActive, isTransfer: bill.isTransfer, fromAccountId: bill.fromAccountId, toAccountId: bill.toAccountId,
+            frequency: bill.rule.frequency, secondDay: bill.secondDay, startDate: bill.anchorDate, accountId: bill.accountId))
+    }
+
+    /// Double-click an empty day: open the Schedule Transaction window with that date filled in.
     private func newSchedule(on date: Date) {
         let day = calendar.component(.day, from: date)
         let draft = ScheduleDraft(name: "", amount: 0, dueDay: min(day, 28), category: "Other", isIncome: false,

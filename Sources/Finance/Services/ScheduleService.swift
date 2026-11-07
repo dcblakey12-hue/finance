@@ -358,6 +358,8 @@ struct ScheduleItem: Equatable {
     var excluded: Set<Date> = []
     /// The account a bill/payday belongs to (nil = unspecified).
     var accountId: String? = nil
+    /// The RecurringBill this was built from (nil in tests / ad-hoc items).
+    var billId: UUID? = nil
     var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: anchor, excluded: excluded) }
     /// Average amount per month (signed), counting every repeat.
     var monthlyAmount: Double { amount * rule.monthlyFactor }
@@ -459,7 +461,7 @@ enum CashCalendar {
             .map { ForecastEvent(date: date, name: $0.name,
                                  amount: balanceEffect(of: $0, cashAccountIds: cashAccountIds),
                                  isIncome: $0.isIncome, category: $0.category,
-                                 isTransfer: $0.isTransfer, gross: abs($0.amount), detail: $0.detail) }
+                                 isTransfer: $0.isTransfer, gross: abs($0.amount), detail: $0.detail, billId: $0.billId) }
     }
 
     /// Totals for the days that fall inside the month. Income/expenses count only today onward
@@ -486,7 +488,7 @@ extension RecurringBill {
         return ScheduleItem(name: name, amount: signedAmount, dueDay: dueDay, category: category,
                             isTransfer: isTransfer, fromAccountId: fromAccountId, toAccountId: toAccountId, detail: detail,
                             frequency: rule.frequency, secondDay: secondDay, anchor: anchorDate, excluded: rule.excluded,
-                            accountId: accountId)
+                            accountId: accountId, billId: id)
     }
     var item: ScheduleItem { item() }
 
