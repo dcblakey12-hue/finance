@@ -15,7 +15,7 @@ final class TransactionImportService {
             account = existing
             if let bal = parsed.balance { account.balance = bal }
         } else {
-            account = Account(name: parsed.accountName, type: .checking, accountId: acctId, bankName: parsed.bankId, balance: parsed.balance ?? 0)
+            account = Account(name: parsed.accountName, type: parsed.isCreditCard ? .creditCard : .checking, accountId: acctId, bankName: parsed.bankId, balance: parsed.balance ?? 0)
             context.insert(account)
         }
 

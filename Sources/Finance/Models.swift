@@ -118,6 +118,8 @@ struct ParsedOFXFile {
     /// These identify the bank (e.g. for looking up its OFX server) but are not a server URL.
     var institutionOrg: String? = nil
     var institutionFid: String? = nil
+    /// True when the statement was a credit card statement (CCSTMTRS).
+    var isCreditCard: Bool = false
 }
 
 struct MonthlySummary {
