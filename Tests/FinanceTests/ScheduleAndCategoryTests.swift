@@ -256,3 +256,26 @@ final class TransferTests: XCTestCase {
         XCTAssertNil(BudgetService.validatedNewCategory("transfer", existing: []))
     }
 }
+
+@MainActor
+final class BudgetIncomeTests: XCTestCase {
+    private func tx(_ account: String, _ amount: Double, _ category: String = "Uncategorized") -> TransactionRecord {
+        TransactionRecord(fitid: UUID().uuidString, accountId: account, accountName: account, date: Date(),
+                          name: "x", amount: amount, type: amount < 0 ? .debit : .credit, category: category)
+    }
+
+    func testIncomeCountsOnlyCheckingDepositsButSpendingCountsEverything() {
+        let cal = Calendar.current
+        let now = Date()
+        let (y, m) = (cal.component(.year, from: now), cal.component(.month, from: now))
+        let txs = [tx("checking", 3000), tx("card", 40), tx("savings", 5), tx("card", -60), tx("checking", -100),
+                   tx("checking", 500, "Transfer"), tx("card", -500, "Transfer")]
+
+        let all = BudgetService.summary(year: y, month: m, transactions: txs)
+        XCTAssertEqual(all.income, 3045, accuracy: 0.001)
+
+        let checkingOnly = BudgetService.summary(year: y, month: m, transactions: txs, incomeAccountIds: ["checking"])
+        XCTAssertEqual(checkingOnly.income, 3000, accuracy: 0.001)
+        XCTAssertEqual(checkingOnly.expenses, 160, accuracy: 0.001)   // card + checking spending, transfers excluded
+    }
+}

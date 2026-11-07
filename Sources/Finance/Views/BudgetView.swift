@@ -4,6 +4,7 @@ import SwiftData
 struct BudgetView: View {
     @Query(sort: \TransactionRecord.date, order: .reverse) var transactions: [TransactionRecord]
     @Query var envelopes: [Envelope]
+    @Query var accounts: [Account]
     @Query var customCategories: [CustomCategory]
     @Environment(\.modelContext) private var context
 
@@ -16,7 +17,14 @@ struct BudgetView: View {
     var thisMonth: [Envelope] {
         envelopes.filter { $0.year == year && $0.month == month }.sorted { $0.category < $1.category }
     }
-    var summary: MonthlySummary { BudgetService.summary(year: year, month: month, transactions: transactions) }
+    /// Income comes from checking accounts only. With no checking account, every account counts.
+    private var checkingAccountIds: Set<String>? {
+        let ids = Set(accounts.filter { $0.type == .checking }.map(\.accountId))
+        return ids.isEmpty ? nil : ids
+    }
+    var summary: MonthlySummary {
+        BudgetService.summary(year: year, month: month, transactions: transactions, incomeAccountIds: checkingAccountIds)
+    }
 
     var body: some View {
         ScrollView {
@@ -29,7 +37,7 @@ struct BudgetView: View {
                     Button("›") { now = Calendar.current.date(byAdding: .month, value: 1, to: now)! }
                 }
                 HStack(spacing: 16) {
-                    KpiCard(title: "Income", value: currency.string(from: NSNumber(value: summary.income)) ?? "", icon: "arrow.down.circle")
+                    KpiCard(title: checkingAccountIds == nil ? "Income" : "Income (checking)", value: currency.string(from: NSNumber(value: summary.income)) ?? "", icon: "arrow.down.circle")
                     KpiCard(title: "Spent", value: currency.string(from: NSNumber(value: summary.expenses)) ?? "", icon: "arrow.up.circle")
                     KpiCard(title: "Left to budget", value: currency.string(from: NSNumber(value: summary.income - thisMonth.reduce(0) { $0 + $1.allocated })) ?? "", icon: "envelope")
                 }

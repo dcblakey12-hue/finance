@@ -48,13 +48,18 @@ final class BudgetService {
         }.reduce(0) { $0 + abs($1.amount) }
     }
 
-    static func summary(year: Int, month: Int, transactions: [TransactionRecord]) -> MonthlySummary {
+    /// Month totals excluding transfers. When `incomeAccountIds` is given, only money
+    /// arriving in those accounts (e.g. checking) counts as income, so card refunds and
+    /// savings interest don't. Spending always counts every account.
+    static func summary(year: Int, month: Int, transactions: [TransactionRecord],
+                        incomeAccountIds: Set<String>? = nil) -> MonthlySummary {
         let cal = Calendar.current
         let inMonth = transactions.filter {
             $0.category != Categorizer.transfer &&
             cal.component(.year, from: $0.date) == year && cal.component(.month, from: $0.date) == month
         }
-        let income = inMonth.filter { !$0.isExpense }.reduce(0) { $0 + $1.amount }
+        let income = inMonth.filter { !$0.isExpense && (incomeAccountIds?.contains($0.accountId) ?? true) }
+            .reduce(0) { $0 + $1.amount }
         let expenses = inMonth.filter { $0.isExpense }.reduce(0) { $0 + abs($1.amount) }
         return MonthlySummary(income: income, expenses: expenses, net: income - expenses)
     }
