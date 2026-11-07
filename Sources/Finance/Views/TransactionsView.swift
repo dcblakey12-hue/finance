@@ -13,6 +13,9 @@ struct TransactionsView: View {
     @Binding var categoryFilter: String
     /// Date range; .allTime shows everything. Also set by the Dashboard drill-down.
     @Binding var periodFilter: DashboardPeriod
+    /// Set when the user arrived by double-clicking from another screen; shows a Back button.
+    var backLabel: String? = nil
+    var onBack: () -> Void = {}
     @State private var search = ""
     @State private var status: String?
     @State private var scheduleEditor: ScheduleEditor?
@@ -149,6 +152,14 @@ struct TransactionsView: View {
             .background(.bar)
         }
         .navigationTitle(accounts.first { $0.accountId == accountFilter }?.name ?? "Transactions")
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                if let backLabel {
+                    Button(action: onBack) { Label("Back to \(backLabel)", systemImage: "chevron.left") }
+                        .help("Return to \(backLabel)")
+                }
+            }
+        }
         .sheet(item: $scheduleEditor) { ed in
             ScheduleEditorSheet(editor: ed, categories: BudgetService.allCategories(stored: customCategories.map(\.name))) { draft in
                 ScheduleEditor.save(draft, existing: nil, in: context)

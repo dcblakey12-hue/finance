@@ -34,6 +34,8 @@ struct ContentView: View {
     /// True while a double-click drill-down is switching to Transactions, so the
     /// filters it set aren't cleared by the sidebar-navigation reset below.
     @State private var isDrillDown = false
+    /// Screen to return to via the Back button after a drill-down; nil when opened from the sidebar.
+    @State private var returnTo: AppSection?
     var body: some View {
         NavigationSplitView {
             List(AppSection.allCases, selection: $selection) { s in
@@ -52,7 +54,9 @@ struct ContentView: View {
                 case .transactions:
                     TransactionsView(accountFilter: $transactionsAccount,
                                      categoryFilter: $transactionsCategory,
-                                     periodFilter: $transactionsPeriod)
+                                     periodFilter: $transactionsPeriod,
+                                     backLabel: returnTo?.rawValue,
+                                     onBack: { if let r = returnTo { selection = r } })
                 case .budget: BudgetView()
                 case .scheduled: ScheduledView()
                 case .calendar: CalendarView()
@@ -69,6 +73,7 @@ struct ContentView: View {
             if new == .transactions && !isDrillDown {
                 transactionsAccount = nil; transactionsCategory = "All"; transactionsPeriod = .allTime
             }
+            if new != .transactions || !isDrillDown { returnTo = nil }
             isDrillDown = false
         }
     }
@@ -79,6 +84,7 @@ struct ContentView: View {
         transactionsCategory = category
         transactionsPeriod = period
         isDrillDown = true
+        returnTo = selection
         selection = .transactions
     }
 }
