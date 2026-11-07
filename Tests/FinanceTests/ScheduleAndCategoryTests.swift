@@ -301,3 +301,39 @@ final class MonthOptionsTests: XCTestCase {
         XCTAssertTrue(o.contains(d(2026, 11)))
     }
 }
+
+final class TransactionFiltersTests: XCTestCase {
+    private var cal: Calendar = {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c
+    }()
+    private func d(_ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: m, day: day))! }
+
+    func testBudgetSpentDrillDownMatchesTheCardTotals() {
+        let f = TransactionFilters(month: d(11, 1), flow: .spending)
+        func m(_ acct: String, _ cat: String, _ date: Date, _ amt: Double) -> Bool {
+            f.matches(accountId: acct, category: cat, date: date, amount: amt, calendar: cal)
+        }
+        XCTAssertTrue(m("card", "Dining", d(11, 30), -20))
+        XCTAssertFalse(m("card", "Dining", d(10, 31), -20))        // other month
+        XCTAssertFalse(m("checking", "Income", d(11, 2), 100))      // money in
+        XCTAssertFalse(m("checking", "Transfer", d(11, 2), -500))   // transfer
+    }
+
+    func testBudgetIncomeDrillDownLimitsToCheckingAccounts() {
+        let f = TransactionFilters(accountIds: ["checking"], month: d(11, 1), flow: .income)
+        func m(_ acct: String, _ cat: String, _ amt: Double) -> Bool {
+            f.matches(accountId: acct, category: cat, date: d(11, 5), amount: amt, calendar: cal)
+        }
+        XCTAssertTrue(m("checking", "Uncategorized", 3000))
+        XCTAssertFalse(m("card", "Uncategorized", 40))              // refund on the card
+        XCTAssertFalse(m("checking", "Transfer", 500))
+        XCTAssertFalse(m("checking", "Dining", -10))
+    }
+
+    func testMonthTakesPriorityOverPeriodAndDefaultsMatchEverything() {
+        let f = TransactionFilters(period: .thisYear, month: d(3, 1))
+        XCTAssertTrue(f.matches(accountId: "a", category: "x", date: d(3, 9), amount: -1, now: d(11, 7), calendar: cal))
+        XCTAssertFalse(f.matches(accountId: "a", category: "x", date: d(4, 9), amount: -1, now: d(11, 7), calendar: cal))
+        XCTAssertTrue(TransactionFilters().matches(accountId: "a", category: "x", date: d(1, 1), amount: 5, calendar: cal))
+    }
+}

@@ -274,3 +274,41 @@ enum SpendingReport {
         return (income, expenses)
     }
 }
+
+// MARK: - Transactions filters
+
+enum TransactionFlow: String, CaseIterable, Identifiable {
+    case all = "All"
+    case income = "Income (no transfers)"
+    case spending = "Spending (no transfers)"
+    var id: String { rawValue }
+}
+
+/// Everything the Transactions screen can be filtered by. Owned by ContentView so
+/// other screens (Dashboard, Accounts, Budget) can open Transactions pre-filtered.
+struct TransactionFilters: Equatable {
+    var accountId: String? = nil        // one account (OFX accountId)
+    var accountIds: Set<String>? = nil  // restrict to a set, e.g. checking accounts
+    var category: String = "All"
+    var period: DashboardPeriod = .allTime
+    var month: Date? = nil              // a specific month; takes priority over `period`
+    var flow: TransactionFlow = .all
+
+    func matches(accountId acct: String, category cat: String, date: Date, amount: Double,
+                 now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        if let accountId, accountId != acct { return false }
+        if let accountIds, !accountIds.contains(acct) { return false }
+        if category != "All", category != cat { return false }
+        if let month {
+            if !calendar.isDate(date, equalTo: month, toGranularity: .month) { return false }
+        } else if period != .allTime, !period.contains(date, now: now, calendar: calendar) {
+            return false
+        }
+        switch flow {
+        case .all: break
+        case .income: if amount < 0 || cat == Categorizer.transfer { return false }
+        case .spending: if amount >= 0 || cat == Categorizer.transfer { return false }
+        }
+        return true
+    }
+}

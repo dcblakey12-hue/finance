@@ -6,13 +6,8 @@ struct TransactionsView: View {
     @Query(sort: \Account.name) var accounts: [Account]
     @Query var customCategories: [CustomCategory]
     @Environment(\.modelContext) private var context
-    /// OFX accountId to show; nil = all accounts. Owned by ContentView so
-    /// double-clicking an account in Accounts can preselect it.
-    @Binding var accountFilter: String?
-    /// "All" or a category name. Owned by ContentView so the Dashboard can open a category.
-    @Binding var categoryFilter: String
-    /// Date range; .allTime shows everything. Also set by the Dashboard drill-down.
-    @Binding var periodFilter: DashboardPeriod
+    /// Active filters. Owned by ContentView so other screens can open Transactions pre-filtered.
+    @Binding var filters: TransactionFilters
     /// Set when the user arrived by double-clicking from another screen; shows a Back button.
     var backLabel: String? = nil
     var onBack: () -> Void = {}
@@ -24,22 +19,20 @@ struct TransactionsView: View {
 
     var filtered: [TransactionRecord] {
         transactions.filter { t in
-            (accountFilter == nil || t.accountId == accountFilter) &&
-            (categoryFilter == "All" || t.category == categoryFilter) &&
-            (periodFilter == .allTime || periodFilter.contains(t.date)) &&
+            filters.matches(accountId: t.accountId, category: t.category, date: t.date, amount: t.amount) &&
             (search.isEmpty || t.name.localizedCaseInsensitiveContains(search) || t.memo.localizedCaseInsensitiveContains(search))
         }
     }
     /// Transactions in the selected account(s), ignoring search and category
     /// filters so the running balance stays correct while filtering.
     private var inScope: [TransactionRecord] {
-        accountFilter == nil ? transactions : transactions.filter { $0.accountId == accountFilter }
+        filters.accountId == nil ? transactions : transactions.filter { $0.accountId == filters.accountId }
     }
     /// Current balance the newest transaction should end at: the selected
     /// account's balance, or all accounts combined.
     private var endingBalance: Double {
-        accountFilter == nil ? accounts.reduce(0) { $0 + $1.balance }
-                             : (accounts.first { $0.accountId == accountFilter }?.balance ?? 0)
+        filters.accountId == nil ? accounts.reduce(0) { $0 + $1.balance }
+                             : (accounts.first { $0.accountId == filters.accountId }?.balance ?? 0)
     }
     private var balances: [UUID: Double] {
         RunningBalance.compute(newestFirst: inScope.map { ($0.id, $0.amount) }, endingBalance: endingBalance)
@@ -59,19 +52,19 @@ struct TransactionsView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Picker("Account", selection: $accountFilter) {
+                Picker("Account", selection: $filters.accountId) {
                     Text("All accounts").tag(String?.none)
                     ForEach(accounts) { a in Text(a.name).tag(String?.some(a.accountId)) }
                 }
                 .frame(maxWidth: 220)
-                Picker("Period", selection: $periodFilter) {
+                Picker("Period", selection: $filters.period) {
                     ForEach(DashboardPeriod.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .frame(maxWidth: 170)
                 TextField("Search transactions", text: $search).textFieldStyle(.roundedBorder)
-                Picker("Category", selection: $categoryFilter) {
+                Picker("Category", selection: $filters.category) {
                     Text("All").tag("All")
-                    ForEach(Array(Set(usedCategories + [categoryFilter]).subtracting(["All"])).sorted(), id: \.self) { c in Text(c).tag(c) }
+                    ForEach(Array(Set(usedCategories + [filters.category]).subtracting(["All"])).sorted(), id: \.self) { c in Text(c).tag(c) }
                 }
                 Button("Auto-categorize") {
                     let n = CategorizationService.categorizeUncategorized(in: context)
@@ -90,6 +83,15 @@ struct TransactionsView: View {
                 }
                 .help("Match equal and opposite amounts in different accounts within 5 days and mark them as Transfer")
             }.padding()
+            if filters.month != nil || filters.flow != .all || filters.accountIds != nil {
+                HStack(spacing: 8) {
+                    if let m = filters.month { chip(Self.monthLabel(m)) { filters.month = nil } }
+                    if filters.flow != .all { chip(filters.flow.rawValue) { filters.flow = .all } }
+                    if filters.accountIds != nil { chip("Checking accounts only") { filters.accountIds = nil } }
+                    Spacer()
+                }
+                .padding(.horizontal).padding(.bottom, 6)
+            }
             if let status {
                 Text(status).font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -157,7 +159,7 @@ struct TransactionsView: View {
             .padding(.horizontal).padding(.vertical, 6)
             .background(.bar)
         }
-        .navigationTitle(accounts.first { $0.accountId == accountFilter }?.name ?? "Transactions")
+        .navigationTitle(accounts.first { $0.accountId == filters.accountId }?.name ?? "Transactions")
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 if let backLabel {
@@ -180,6 +182,17 @@ struct TransactionsView: View {
             } onCancel: { newCategoryFor = nil }
         }
     }
+
+    private func chip(_ title: String, clear: @escaping () -> Void) -> some View {
+        Button(action: clear) { Label(title, systemImage: "xmark.circle.fill") }
+            .buttonStyle(.bordered).controlSize(.small)
+            .help("Remove this filter")
+    }
+
+    private static let monthFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f
+    }()
+    private static func monthLabel(_ d: Date) -> String { monthFormatter.string(from: d) }
 
     private func setCategory(_ newCat: String, on tx: TransactionRecord) {
         guard newCat != tx.category else { return }

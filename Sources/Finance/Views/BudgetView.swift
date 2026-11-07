@@ -8,6 +8,9 @@ struct BudgetView: View {
     @Query var customCategories: [CustomCategory]
     @Environment(\.modelContext) private var context
 
+    /// Opens Transactions pre-filtered (Income / Spent cards, on double-click).
+    var onOpenTransactions: (TransactionFilters) -> Void = { _ in }
+
     @State private var now = Date()
     @State private var editAmounts: [String: String] = [:]
     @State private var editedCategory: String = ""
@@ -43,8 +46,14 @@ struct BudgetView: View {
                         .help("Next month")
                 }
                 HStack(spacing: 16) {
-                    KpiCard(title: checkingAccountIds == nil ? "Income" : "Income (checking)", value: currency.string(from: NSNumber(value: summary.income)) ?? "", icon: "arrow.down.circle")
-                    KpiCard(title: "Spent", value: currency.string(from: NSNumber(value: summary.expenses)) ?? "", icon: "arrow.up.circle")
+                    KpiCard(title: checkingAccountIds == nil ? "Income" : "Income (checking)", value: currency.string(from: NSNumber(value: summary.income)) ?? "", icon: "arrow.down.circle",
+                            onDoubleClick: {
+                                onOpenTransactions(TransactionFilters(accountIds: checkingAccountIds, month: selectedMonthStart, flow: .income))
+                            })
+                    KpiCard(title: "Spent", value: currency.string(from: NSNumber(value: summary.expenses)) ?? "", icon: "arrow.up.circle",
+                            onDoubleClick: {
+                                onOpenTransactions(TransactionFilters(month: selectedMonthStart, flow: .spending))
+                            })
                     KpiCard(title: "Balance (income − spent)", value: currency.string(from: NSNumber(value: summary.net)) ?? "", icon: "scalemass")
                     KpiCard(title: "Left to budget", value: currency.string(from: NSNumber(value: summary.income - thisMonth.reduce(0) { $0 + $1.allocated })) ?? "", icon: "envelope")
                 }

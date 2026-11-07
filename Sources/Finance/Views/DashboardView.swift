@@ -121,6 +121,8 @@ struct DashboardView: View {
 
 struct KpiCard: View {
     let title: String, value: String, icon: String
+    /// When set, double-clicking the card calls this.
+    var onDoubleClick: (() -> Void)? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(title, systemImage: icon).font(.caption).foregroundStyle(.secondary)
@@ -129,5 +131,8 @@ struct KpiCard: View {
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onTapGesture(count: 2) { onDoubleClick?() }
+        .help(onDoubleClick == nil ? "" : "Double-click to see these transactions")
     }
 }
