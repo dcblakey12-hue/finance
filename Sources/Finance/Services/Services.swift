@@ -21,11 +21,13 @@ final class TransactionImportService {
 
         let existingRecords: [TransactionRecord] = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
         let existingFitIds = Set(existingRecords.map { "\($0.accountId)|\($0.fitid)" })
+        let rules = CategorizationService.ruleMap(in: context)
         var inserted = 0, skipped = 0
         for t in parsed.transactions {
             let key = "\(acctId)|\(t.fitid)"
             if existingFitIds.contains(key) { skipped += 1; continue }
-            let rec = TransactionRecord(fitid: t.fitid, accountId: acctId, accountName: account.name, date: t.date, name: t.name, amount: t.amount, type: t.type, memo: t.memo)
+            let category = Categorizer.category(forName: t.name, rules: rules) ?? Categorizer.uncategorized
+            let rec = TransactionRecord(fitid: t.fitid, accountId: acctId, accountName: account.name, date: t.date, name: t.name, amount: t.amount, type: t.type, category: category, memo: t.memo)
             context.insert(rec)
             inserted += 1
         }
