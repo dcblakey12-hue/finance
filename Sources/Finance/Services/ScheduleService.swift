@@ -132,6 +132,16 @@ enum OccurrenceLog {
     }
 }
 
+/// A scheduled payment whose date has passed without being entered or skipped.
+struct OverdueItem: Identifiable {
+    let bill: RecurringBill
+    let date: Date
+    var id: String { "\(bill.id.uuidString)|\(Int(date.timeIntervalSince1970))" }
+    func daysLate(today: Date = Date(), calendar: Calendar = .current) -> Int {
+        calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: today)).day ?? 0
+    }
+}
+
 /// Plain values for creating or editing a scheduled transaction (RecurringBill).
 struct ScheduleDraft: Equatable {
     var name: String
@@ -194,6 +204,7 @@ enum ScheduleService {
                                   isActive: d.isActive, isIncome: d.isIncome && !d.isTransfer)
             s.kindRaw = kind; s.fromAccountId = from; s.toAccountId = to
             s.frequencyRaw = d.frequency.rawValue; s.secondDay = d.secondDay; s.anchorDate = d.startDate
+            s.trackedSince = Calendar.current.startOfDay(for: Date())
             context.insert(s)
         }
         try? context.save()
@@ -227,6 +238,66 @@ enum ScheduleService {
         bill.record(.entered, on: occurrence)
         try? context.save()
         return true
+    }
+
+    /// Payments that came due after a schedule started being tracked (at most 90 days back) and
+    /// were neither entered nor skipped, oldest first. Paused schedules are ignored.
+    @MainActor
+    static func overdue(_ bills: [RecurringBill], today: Date = Date(), calendar: Calendar = .current) -> [OverdueItem] {
+        let todayStart = calendar.startOfDay(for: today)
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: todayStart),
+              let floor = calendar.date(byAdding: .day, value: -90, to: todayStart) else { return [] }
+        var out: [OverdueItem] = []
+        for b in bills where b.isActive {
+            guard let since = b.trackedSince else { continue }
+            let from = max(calendar.startOfDay(for: since), floor)
+            guard from <= yesterday else { continue }
+            for d in b.rule.dates(from: from, to: yesterday, calendar: calendar) { out.append(OverdueItem(bill: b, date: d)) }
+        }
+        return out.sorted { ($0.date, $0.bill.name) < ($1.date, $1.bill.name) }
+    }
+
+    /// Existing schedules start being tracked today, so the first run of the overdue list doesn't
+    /// dredge up payments from before it existed.
+    @MainActor
+    static func ensureTracking(in context: ModelContext, now: Date = Date(), calendar: Calendar = .current) {
+        let bills = (try? context.fetch(FetchDescriptor<RecurringBill>())) ?? []
+        var changed = false
+        for b in bills where b.trackedSince == nil { b.trackedSince = calendar.startOfDay(for: now); changed = true }
+        if changed { try? context.save() }
+    }
+
+    /// After an import: mark overdue payments as entered when the bank reported a matching
+    /// transaction (same direction, amount within 15%, within 5 days of the due date, in the
+    /// schedule's usual account if it has one). Each new transaction resolves at most one payment.
+    @MainActor @discardableResult
+    static func autoResolve(with newTransactions: [TransactionRecord], in context: ModelContext,
+                            today: Date = Date(), calendar: Calendar = .current) -> Int {
+        let bills = ((try? context.fetch(FetchDescriptor<RecurringBill>())) ?? []).filter { !$0.isTransfer }
+        var used = Set<UUID>()
+        var resolved = 0
+        for item in overdue(bills, today: today, calendar: calendar) {
+            let b = item.bill
+            let size = abs(b.amount)
+            func gap(_ t: TransactionRecord) -> (Double, Int) {
+                (abs(abs(t.amount) - size),
+                 abs(calendar.dateComponents([.day], from: calendar.startOfDay(for: t.date), to: item.date).day ?? 99))
+            }
+            let match = newTransactions
+                .filter { t in
+                    !used.contains(t.id) && (t.amount > 0) == b.isIncome &&
+                    (b.accountId == nil || b.accountId == t.accountId) &&
+                    gap(t).0 <= max(1, size * 0.15) && gap(t).1 <= 5
+                }
+                .min { gap($0) < gap($1) }
+            if let match {
+                used.insert(match.id)
+                b.record(.entered, on: item.date, now: today, calendar: calendar)
+                resolved += 1
+            }
+        }
+        if resolved > 0 { try? context.save() }
+        return resolved
     }
 
     /// Leave this payment out: no transaction, and the schedule moves on to the next one.

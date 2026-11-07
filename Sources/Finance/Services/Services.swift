@@ -24,6 +24,7 @@ final class TransactionImportService {
         let rules = CategorizationService.ruleMap(in: context)
         let allowed = CategoryService.allowedBuiltIns(in: context)
         var inserted = 0, skipped = 0
+        var newlyInserted: [TransactionRecord] = []
         // Transactions typed in by hand (e.g. on the phone) that the bank has now reported.
         var manual = existingRecords.filter { $0.accountId == acctId && ManualTransactionService.isManual($0) }
         for t in parsed.transactions {
@@ -41,9 +42,12 @@ final class TransactionImportService {
                 context.delete(m)
             }
             context.insert(rec)
+            newlyInserted.append(rec)
             inserted += 1
         }
         try? context.save()
+        // Scheduled payments the bank has now reported no longer count as overdue.
+        ScheduleService.autoResolve(with: newlyInserted, in: context)
         return (inserted, skipped)
     }
 }

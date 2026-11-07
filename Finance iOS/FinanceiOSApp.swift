@@ -28,6 +28,7 @@ struct FinanceiOSApp: App {
 
 struct RootView: View {
     @Environment(\.modelContext) private var context
+    @Query private var schedules: [RecurringBill]
 
     var body: some View {
         TabView {
@@ -39,11 +40,13 @@ struct RootView: View {
                 .tabItem { Label("Calendar", systemImage: "calendar") }
             ScheduledTab()
                 .tabItem { Label("Scheduled", systemImage: "calendar.badge.clock") }
+                .badge(ScheduleService.overdue(schedules).count)
         }
         .task {
             // The Mac app owns the category list (it seeds the defaults); the phone must not
             // seed its own copy or it would bring back categories you renamed or deleted.
             DedupeService.run(in: context)
+            ScheduleService.ensureTracking(in: context)
         }
     }
 }

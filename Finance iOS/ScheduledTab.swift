@@ -8,17 +8,38 @@ struct ScheduledTab: View {
     @Environment(\.modelContext) private var context
 
     @State private var editing: EditTarget?
-    @State private var entering: RecurringBill?
+    @State private var entering: EntryTarget?
 
     private struct EditTarget: Identifiable { let id = UUID(); let existing: RecurringBill? }
+    private var overdueItems: [OverdueItem] { ScheduleService.overdue(schedules) }
     private var names: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
     private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
 
     var body: some View {
         NavigationStack {
             List {
+                if !overdueItems.isEmpty {
+                    Section {
+                        ForEach(overdueItems) { item in
+                            Button { entering = EntryTarget(bill: item.bill, date: item.date) } label: {
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(item.bill.name).foregroundStyle(Color.primary)
+                                        Text("due \(item.date.formatted(.dateTime.month(.abbreviated).day())) • \(item.daysLate()) day\(item.daysLate() == 1 ? "" : "s") late")
+                                            .font(.caption).foregroundStyle(.red)
+                                    }
+                                    Spacer()
+                                    Text(money(item.bill.signedAmount)).monospacedDigit().foregroundStyle(Color.primary)
+                                }
+                            }
+                            .swipeActions(edge: .trailing) {
+                                Button("Skip") { ScheduleService.skip(item.bill, occurrence: item.date, in: context) }.tint(.orange)
+                            }
+                        }
+                    } header: { Text("Overdue — tap to enter, swipe to skip").foregroundStyle(.red) }
+                }
                 ForEach(ScheduleService.orderedByNextDue(schedules)) { s in
-                    Button { if s.isActive { entering = s } else { editing = EditTarget(existing: s) } } label: {
+                    Button { if s.isActive { entering = EntryTarget(bill: s, date: nil) } else { editing = EditTarget(existing: s) } } label: {
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(s.name).foregroundStyle(s.isActive ? Color.primary : .secondary)
@@ -38,7 +59,7 @@ struct ScheduledTab: View {
                     }
                     .contextMenu {
                         if s.isActive {
-                            Button("Enter next payment…") { entering = s }
+                            Button("Enter next payment…") { entering = EntryTarget(bill: s, date: nil) }
                             Button("Skip next payment") {
                                 if let due = s.rule.nextDate(from: Date()) { ScheduleService.skip(s, occurrence: due, in: context) }
                             }
@@ -53,6 +74,7 @@ struct ScheduledTab: View {
                 }
             }
             .navigationTitle("Scheduled")
+            .task { ScheduleService.ensureTracking(in: context) }
             .toolbar { Button { editing = EditTarget(existing: nil) } label: { Image(systemName: "plus") } }
             .overlay {
                 if schedules.isEmpty {
@@ -60,8 +82,8 @@ struct ScheduledTab: View {
                         description: Text("Tap + to add a bill, payday or transfer."))
                 }
             }
-            .sheet(item: $entering) { bill in
-                EnterScheduledForm(bill: bill, accounts: accounts) { entering = nil }
+            .sheet(item: $entering) { target in
+                EnterScheduledForm(bill: target.bill, occurrenceOverride: target.date, accounts: accounts) { entering = nil }
             }
             .sheet(item: $editing) { target in
                 ScheduleForm(existing: target.existing,
@@ -171,9 +193,16 @@ struct ScheduleForm: View {
 }
 
 
-/// Enter (or skip) the next payment of a schedule as a real transaction.
+struct EntryTarget: Identifiable {
+    let id = UUID()
+    let bill: RecurringBill
+    let date: Date?        // nil = the next payment
+}
+
+/// Enter (or skip) a payment of a schedule as a real transaction.
 struct EnterScheduledForm: View {
     let bill: RecurringBill
+    var occurrenceOverride: Date? = nil
     let accounts: [Account]
     let done: () -> Void
 
@@ -184,7 +213,7 @@ struct EnterScheduledForm: View {
     @State private var fromId: String?
     @State private var toId: String?
 
-    private var occurrence: Date? { bill.rule.nextDate(from: Date()) }
+    private var occurrence: Date? { occurrenceOverride ?? bill.rule.nextDate(from: Date()) }
     private var amount: Double? { Double(amountText.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: "")) }
     private var canEnter: Bool {
         guard occurrence != nil, let a = amount, a > 0 else { return false }

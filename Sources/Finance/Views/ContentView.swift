@@ -22,6 +22,7 @@ enum AppSection: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @Environment(\.modelContext) private var context
+    @Query private var schedules: [RecurringBill]
     @State private var selection: AppSection? = .dashboard
     /// OFX accountId shown in Transactions; nil = all accounts.
     @State private var transactionFilters = TransactionFilters()
@@ -34,6 +35,7 @@ struct ContentView: View {
         NavigationSplitView {
             List(AppSection.allCases, selection: $selection) { s in
                 Label(s.rawValue, systemImage: s.icon).tag(s)
+                    .badge(s == .scheduled ? ScheduleService.overdue(schedules).count : 0)
             }
             .navigationTitle("Finance")
         } detail: {
@@ -62,6 +64,7 @@ struct ContentView: View {
         .task {
             CategoryService.seedIfNeeded(in: context)
             DedupeService.run(in: context)
+            ScheduleService.ensureTracking(in: context)
         }
         .onChange(of: selection) { _, new in
             // Opening Transactions from the sidebar starts unfiltered; a drill-down keeps its filters.

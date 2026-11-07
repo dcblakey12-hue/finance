@@ -109,6 +109,8 @@ final class RecurringBill {
     var occurrenceLogRaw: String = ""
     /// Account used last time this schedule was entered (default for next time).
     var accountId: String? = nil
+    /// Payments dated before this day are never treated as overdue (set when the schedule is created).
+    var trackedSince: Date? = nil
 
     init(id: UUID = UUID(), name: String, amount: Double, dueDay: Int, category: String, isActive: Bool = true, isIncome: Bool = false) {
         self.id = id; self.name = name; self.amount = amount; self.dueDay = dueDay

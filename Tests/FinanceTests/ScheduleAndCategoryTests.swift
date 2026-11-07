@@ -869,3 +869,70 @@ final class ScheduleEntryTests: XCTestCase {
         XCTAssertTrue(events.isEmpty)
     }
 }
+
+@MainActor
+final class OverdueTests: XCTestCase {
+    private var context: ModelContext!
+    private var cal: Calendar { Calendar.current }
+    override func setUp() async throws {
+        let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        context = ModelContext(container)
+    }
+    private func day(_ y: Int, _ m: Int, _ d: Int) -> Date { cal.date(from: DateComponents(year: y, month: m, day: d))! }
+
+    func testOverdueListsMissedPaymentsSinceTracking() {
+        let today = day(2026, 11, 20)
+        let weekly = RecurringBill(name: "Groceries", amount: 100, dueDay: 1, category: "Groceries")
+        weekly.frequencyRaw = "weekly"; weekly.anchorDate = day(2026, 11, 6)       // Fridays: 6, 13, 20
+        weekly.trackedSince = day(2026, 11, 1)
+        let rent = RecurringBill(name: "Rent", amount: 1200, dueDay: 1, category: "Housing")
+        rent.trackedSince = day(2026, 11, 10)                                        // Nov 1 is before tracking
+        let untracked = RecurringBill(name: "New", amount: 5, dueDay: 2, category: "Other")
+        let paused = RecurringBill(name: "Old", amount: 5, dueDay: 2, category: "Other", isActive: false)
+        paused.trackedSince = day(2026, 11, 1)
+
+        let items = ScheduleService.overdue([weekly, rent, untracked, paused], today: today, calendar: cal)
+        XCTAssertEqual(items.map { "\($0.bill.name) \(cal.component(.day, from: $0.date))" }, ["Groceries 6", "Groceries 13"])  // 20 is today, not overdue
+        XCTAssertEqual(items[0].daysLate(today: today, calendar: cal), 14)
+
+        weekly.record(.skipped, on: day(2026, 11, 6))
+        XCTAssertEqual(ScheduleService.overdue([weekly], today: today, calendar: cal).count, 1)
+    }
+
+    func testEnsureTrackingOnlySetsMissingStart() {
+        let a = RecurringBill(name: "A", amount: 1, dueDay: 1, category: "x")
+        let b = RecurringBill(name: "B", amount: 1, dueDay: 1, category: "x")
+        let earlier = day(2026, 1, 1)
+        b.trackedSince = earlier
+        context.insert(a); context.insert(b)
+        ScheduleService.ensureTracking(in: context, now: day(2026, 11, 7), calendar: cal)
+        XCTAssertEqual(a.trackedSince, day(2026, 11, 7)); XCTAssertEqual(b.trackedSince, earlier)
+    }
+
+    func testImportMarksMatchingOverduePaymentEntered() {
+        let today = Date()
+        let due = cal.date(byAdding: .day, value: -3, to: cal.startOfDay(for: today))!
+        let bill = RecurringBill(name: "Electric", amount: 100, dueDay: cal.component(.day, from: due), category: "Utilities")
+        bill.trackedSince = cal.date(byAdding: .day, value: -10, to: due)!
+        context.insert(bill)
+        let bank = TransactionRecord(fitid: "F1", accountId: "chk", accountName: "C", date: due, name: "POWER CO", amount: -108, type: .debit)
+        let unrelated = TransactionRecord(fitid: "F2", accountId: "chk", accountName: "C", date: due, name: "COFFEE", amount: -4, type: .debit)
+        let farAway = TransactionRecord(fitid: "F3", accountId: "chk", accountName: "C",
+                                        date: cal.date(byAdding: .day, value: -30, to: due)!, name: "POWER CO", amount: -100, type: .debit)
+        XCTAssertEqual(ScheduleService.autoResolve(with: [unrelated, farAway], in: context, today: today, calendar: cal), 0)
+        XCTAssertEqual(ScheduleService.overdue([bill], today: today, calendar: cal).count, 1)
+        XCTAssertEqual(ScheduleService.autoResolve(with: [bank, unrelated], in: context, today: today, calendar: cal), 1)
+        XCTAssertTrue(ScheduleService.overdue([bill], today: today, calendar: cal).isEmpty)
+    }
+
+    func testNewSchedulesStartTrackingToday() throws {
+        var draft = ScheduleDraft(name: "Gym", amount: 40, dueDay: 3, category: "Health", isIncome: false)
+        draft.frequency = .monthly
+        ScheduleService.save(draft, existing: nil, in: context)
+        let bill = try XCTUnwrap(try context.fetch(FetchDescriptor<RecurringBill>()).first)
+        XCTAssertEqual(bill.trackedSince, cal.startOfDay(for: Date()))
+        XCTAssertTrue(ScheduleService.overdue([bill]).isEmpty)
+    }
+}
