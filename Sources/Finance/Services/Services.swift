@@ -48,6 +48,25 @@ final class BudgetService {
         }.reduce(0) { $0 + abs($1.amount) }
     }
 
+    /// Months to offer in the Budget month dropdown, newest first (each is a start-of-month date):
+    /// from the earlier of your first transaction and 11 months ago, through 3 months ahead,
+    /// always including the currently selected month.
+    static func monthOptions(earliest: Date?, now: Date, selected: Date, calendar: Calendar = .current) -> [Date] {
+        func monthStart(_ d: Date) -> Date { calendar.dateInterval(of: .month, for: d)?.start ?? d }
+        let current = monthStart(now)
+        let elevenAgo = calendar.date(byAdding: .month, value: -11, to: current) ?? current
+        let first = min(earliest.map(monthStart) ?? elevenAgo, elevenAgo, monthStart(selected))
+        let last = max(calendar.date(byAdding: .month, value: 3, to: current) ?? current, monthStart(selected))
+        var months: [Date] = []
+        var m = first
+        while m <= last && months.count < 600 {
+            months.append(m)
+            guard let next = calendar.date(byAdding: .month, value: 1, to: m) else { break }
+            m = next
+        }
+        return months.reversed()
+    }
+
     /// Month totals excluding transfers. When `incomeAccountIds` is given, only money
     /// arriving in those accounts (e.g. checking) counts as income, so card refunds and
     /// savings interest don't. Spending always counts every account.

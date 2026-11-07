@@ -33,8 +33,14 @@ struct BudgetView: View {
                     Text("Envelope Budget — \(monthShort)").font(.largeTitle.bold())
                     Spacer()
                     Button("‹") { now = Calendar.current.date(byAdding: .month, value: -1, to: now)! }
-                    DatePicker("Month", selection: $now, displayedComponents: .date).labelsHidden()
+                        .help("Previous month")
+                    Picker("Month", selection: monthBinding) {
+                        ForEach(monthOptions, id: \.self) { Text(Self.monthLabel($0)).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 170)
                     Button("›") { now = Calendar.current.date(byAdding: .month, value: 1, to: now)! }
+                        .help("Next month")
                 }
                 HStack(spacing: 16) {
                     KpiCard(title: checkingAccountIds == nil ? "Income" : "Income (checking)", value: currency.string(from: NSNumber(value: summary.income)) ?? "", icon: "arrow.down.circle")
@@ -67,6 +73,18 @@ struct BudgetView: View {
         }
         .navigationTitle("Budget")
     }
+    private var selectedMonthStart: Date { Calendar.current.dateInterval(of: .month, for: now)?.start ?? now }
+    private var monthOptions: [Date] {
+        BudgetService.monthOptions(earliest: transactions.last?.date, now: Date(), selected: selectedMonthStart)
+    }
+    private var monthBinding: Binding<Date> {
+        Binding(get: { selectedMonthStart }, set: { now = $0 })
+    }
+    private static let monthFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f
+    }()
+    private static func monthLabel(_ d: Date) -> String { monthFormatter.string(from: d) }
+
     private var monthShort: String {
         let df = DateFormatter(); df.dateFormat = "MMMM yyyy"; return df.string(from: now)
     }

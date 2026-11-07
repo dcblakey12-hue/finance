@@ -279,3 +279,25 @@ final class BudgetIncomeTests: XCTestCase {
         XCTAssertEqual(checkingOnly.expenses, 160, accuracy: 0.001)   // card + checking spending, transfers excluded
     }
 }
+
+@MainActor
+final class MonthOptionsTests: XCTestCase {
+    private var cal: Calendar = {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c
+    }()
+    private func d(_ y: Int, _ m: Int, _ day: Int = 1) -> Date { cal.date(from: DateComponents(year: y, month: m, day: day))! }
+
+    func testDefaultRangeIsElevenMonthsBackToThreeAhead() {
+        let o = BudgetService.monthOptions(earliest: nil, now: d(2026, 11, 7), selected: d(2026, 11), calendar: cal)
+        XCTAssertEqual(o.count, 15)
+        XCTAssertEqual(o.first, d(2027, 2))
+        XCTAssertEqual(o.last, d(2025, 12))
+    }
+
+    func testReachesBackToFirstTransactionAndIncludesSelection() {
+        let o = BudgetService.monthOptions(earliest: d(2025, 3, 14), now: d(2026, 11, 7), selected: d(2027, 8), calendar: cal)
+        XCTAssertEqual(o.last, d(2025, 3))
+        XCTAssertEqual(o.first, d(2027, 8))
+        XCTAssertTrue(o.contains(d(2026, 11)))
+    }
+}
