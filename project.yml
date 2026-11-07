@@ -1,0 +1,89 @@
+name: Finance
+
+options:
+  bundleIdPrefix: com.finance
+  deploymentTarget:
+    macOS: "14.0"
+  generateEmptyDirectories: true
+
+configs:
+  Debug: debug
+  Release: release
+
+targets:
+  Finance:
+    platform: macOS
+    type: application
+    sources:
+      - path: Sources/Finance
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.finance.Finance
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_CFBundleDisplayName: Finance
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.finance
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: "NO"
+        INFOPLIST_KEY_NSSupportsAutomaticGraphicsSwitching: "YES"
+        SWIFT_VERSION: "5.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
+        ENABLE_APP_SANDBOX: "NO"
+        ENABLE_HARDENED_RUNTIME: "YES"
+        ENABLE_INCOMING_NETWORK_CONNECTIONS: "NO"
+      Debug:
+        ENABLE_TESTABILITY: "YES"
+        GCC_PREPROCESSOR_DEFINITIONS: ["DEBUG=1"]
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+        INFOPLIST_KEY_LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+    info:
+      path: Sources/Finance/Info.plist
+      properties:
+        CFBundleDisplayName: Finance
+        CFBundleName: Finance
+        CFBundleShortVersionString: "1.0"
+        NSMainStoryboardFile: ""
+        NSPrincipalClass: NSApplication
+        LSApplicationCategoryType: public.app-category.finance
+        ITSAppUsesNonExemptEncryption: false
+        NSSupportsAutomaticGraphicsSwitching: true
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+    entitlements:
+      path: Sources/Finance/Finance.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.files.user-selected.read-write: true
+        keychain-access-groups: []
+
+  FinanceTests:
+    platform: macOS
+    type: bundle.unit-test
+    sources:
+      - path: Tests/FinanceTests
+        excludes:
+          - Resources/sample.ofx
+      - path: Tests/FinanceTests/Resources/sample.ofx
+    dependencies:
+      - target: Finance
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.finance.FinanceTests
+        GENERATE_INFOPLIST_FILE: "YES"
+        SWIFT_VERSION: "5.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+
+schemes:
+  Finance:
+    build:
+      targets:
+        Finance: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - FinanceTests

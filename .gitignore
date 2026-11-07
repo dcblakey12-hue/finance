@@ -1,0 +1,15 @@
+.build/
+*.xcuserdata/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/*.xcworkspace/xcuserdata/
+.DS_Store
+*.orig
+*.rej
+# Keep generated Xcode project; ignore per-user state only
+
+# SwiftPM / Xcode per-user state
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+build/
