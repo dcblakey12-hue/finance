@@ -193,7 +193,7 @@ struct TransactionsView: View {
                                 accounts: accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }) { draft in
                 ScheduleEditor.save(draft, existing: nil, in: context)
                 scheduleEditor = nil
-                status = "Scheduled \(draft.name) for the \(draft.dueDay)\(ordinalSuffix(draft.dueDay)) of each month. See Scheduled Transactions."
+                status = "Scheduled \(draft.name): \(draft.rule.summary()). See Scheduled Transactions."
             } onCancel: { scheduleEditor = nil }
         }
         .sheet(item: $linkingTx) { tx in
