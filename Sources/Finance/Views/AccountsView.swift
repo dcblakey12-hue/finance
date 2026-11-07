@@ -15,18 +15,31 @@ struct AccountsView: View {
     @State private var pendingDelete: Account?
 
     var body: some View {
-        List(accounts, selection: $selection) { a in
-            HStack {
-                Image(systemName: icon(for: a.type)).foregroundStyle(.secondary)
-                VStack(alignment: .leading) {
-                    Text(a.name).font(.headline)
-                    Text("\(accountTypeLabel(a.type)) • \(a.bankName) •••\(a.accountId.suffix(4))").font(.caption).foregroundStyle(.secondary)
+        List(selection: $selection) {
+            ForEach(AccountType.grouped(accounts, by: \.type), id: \.type) { group in
+                Section {
+                    ForEach(group.items) { a in
+                        HStack {
+                            Image(systemName: icon(for: a.type)).foregroundStyle(.secondary)
+                            VStack(alignment: .leading) {
+                                Text(a.name).font(.headline)
+                                Text("\(a.bankName) •••\(a.accountId.suffix(4))").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(currency.string(from: NSNumber(value: a.balance)) ?? "$0").monospacedDigit()
+                        }
+                        .padding(.vertical, 4)
+                        .tag(a.id)
+                    }
+                } header: {
+                    HStack {
+                        Label(accountTypeLabel(group.type), systemImage: icon(for: group.type)).font(.subheadline.bold())
+                        Spacer()
+                        Text(currency.string(from: NSNumber(value: group.items.reduce(0) { $0 + $1.balance })) ?? "")
+                            .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                    }
                 }
-                Spacer()
-                Text(currency.string(from: NSNumber(value: a.balance)) ?? "$0").monospacedDigit()
             }
-            .padding(.vertical, 4)
-            .tag(a.id)
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             if let a = account(for: ids) {
@@ -102,6 +115,7 @@ struct AccountsView: View {
         switch t {
         case .checking, .savings: return "building.columns"
         case .creditCard: return "creditcard"
+        case .mortgage: return "house"
         case .investment: return "chart.line.uptrend.xyaxis"
         case .cash: return "banknote"
         }
@@ -113,7 +127,8 @@ func accountTypeLabel(_ t: AccountType) -> String {
     case .checking: return "Checking"
     case .savings: return "Savings"
     case .creditCard: return "Credit Card"
-    case .investment: return "Investment"
+    case .mortgage: return "Mortgage"
+    case .investment: return "Investment / Brokerage"
     case .cash: return "Cash"
     }
 }

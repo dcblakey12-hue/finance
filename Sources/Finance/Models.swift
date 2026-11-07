@@ -1,7 +1,27 @@
 import Foundation
 import SwiftData
 
-enum AccountType: String, Codable, CaseIterable { case checking, savings, creditCard, investment, cash }
+enum AccountType: String, Codable, CaseIterable { case checking, savings, creditCard, mortgage, investment, cash }
+
+/// Accounts of one type, for sectioned lists.
+struct AccountGroup<Item> {
+    let type: AccountType
+    let items: [Item]
+}
+
+extension AccountType {
+    /// Order sections appear in: checking first, then savings, cards, mortgage, investments, cash.
+    static let displayOrder: [AccountType] = [.checking, .savings, .creditCard, .mortgage, .investment, .cash]
+
+    /// Group items by account type in `displayOrder`, skipping types with no accounts.
+    /// Items keep their incoming order within each group.
+    static func grouped<Item>(_ items: [Item], by type: (Item) -> AccountType) -> [AccountGroup<Item>] {
+        displayOrder.compactMap { t in
+            let matching = items.filter { type($0) == t }
+            return matching.isEmpty ? nil : AccountGroup(type: t, items: matching)
+        }
+    }
+}
 enum TransactionType: String, Codable { case debit, credit }
 
 @Model

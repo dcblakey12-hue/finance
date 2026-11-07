@@ -337,3 +337,16 @@ final class TransactionFiltersTests: XCTestCase {
         XCTAssertTrue(TransactionFilters().matches(accountId: "a", category: "x", date: d(1, 1), amount: 5, calendar: cal))
     }
 }
+
+final class AccountGroupingTests: XCTestCase {
+    func testGroupsFollowDisplayOrderAndSkipEmptyTypes() {
+        let items: [(name: String, type: AccountType)] = [
+            ("Brokerage", .investment), ("Visa", .creditCard), ("Everyday", .checking),
+            ("Home loan", .mortgage), ("Rainy day", .savings), ("Bills", .checking),
+        ]
+        let groups = AccountType.grouped(items, by: { $0.type })
+        XCTAssertEqual(groups.map(\.type), [.checking, .savings, .creditCard, .mortgage, .investment])
+        XCTAssertEqual(groups.first?.items.map(\.name), ["Everyday", "Bills"])   // incoming order kept
+        XCTAssertTrue(AccountType.grouped([(String, AccountType)](), by: { $0.1 }).isEmpty)
+    }
+}
