@@ -971,9 +971,9 @@ final class FutureLedgerTests: XCTestCase {
     private func d(_ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: m, day: day))! }
 
     func testFutureLedgerTransactionLandsOnItsDayAndBalanceIsNotDoubleCounted() {
-        // Balance today (Nov 7) already includes a -$200 entry dated Nov 20.
+        // Balance as of Nov 7 is $1000; a -$200 entry is booked for Nov 20.
         let entry = LedgerEntry(date: d(11, 20), name: "Dentist", amount: -200, accountId: "chk")
-        let days = CashCalendar.grid(month: d(11, 1), schedules: [], balanceToday: 800, today: d(11, 7),
+        let days = CashCalendar.grid(month: d(11, 1), schedules: [], balanceToday: 1000, today: d(11, 7),
                                      cashAccountIds: ["chk"], ledger: [entry], calendar: cal)
         func day(_ n: Int) -> CalendarDay { days.first { $0.date == d(11, n) }! }
         XCTAssertEqual(day(20).events.map(\.name), ["Dentist"])
@@ -987,6 +987,15 @@ final class FutureLedgerTests: XCTestCase {
                                      cashAccountIds: ["chk"], ledger: [entry], calendar: cal)
         XCTAssertTrue(days.allSatisfy { $0.events.isEmpty })
         XCTAssertEqual(days.first { $0.date == d(11, 25) }?.closing, 800)
+    }
+
+    func testBalanceBookLeavesOutFutureBookings() {
+        let acct = Account(name: "Checking", type: .checking, accountId: "chk", bankName: "B", balance: 800)   // includes -200 booked ahead
+        let today = d(11, 7)
+        let txs = [TransactionRecord(fitid: "a", accountId: "chk", accountName: "Checking", date: d(11, 20), name: "Dentist", amount: -200, type: .debit),
+                   TransactionRecord(fitid: "b", accountId: "chk", accountName: "Checking", date: d(11, 7), name: "Today", amount: -10, type: .debit)]
+        let book = BalanceBook(transactions: txs, today: today, calendar: cal)
+        XCTAssertEqual(book.today(acct), 1000)       // today's own transaction stays in
     }
 }
 

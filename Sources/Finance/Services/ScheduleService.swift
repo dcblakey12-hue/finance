@@ -416,8 +416,8 @@ enum CashCalendar {
         let totalDays = rows * 7
         let gridEnd = date(totalDays - 1, from: gridStart)
 
-        // Future-dated transactions already in the ledger are in today's balance; take them out
-        // and let them land on their own day instead.
+        // `balanceToday` is the balance as of today (future-dated entries not included); the
+        // ones already in the ledger land on their own day.
         let futureLedger = ledger.filter { calendar.startOfDay(for: $0.date) > todayStart }
         func ledgerEvents(on day: Date) -> [ForecastEvent] {
             futureLedger.filter { calendar.isDate($0.date, inSameDayAs: day) && (cashAccountIds?.contains($0.accountId) ?? true) }
@@ -425,10 +425,9 @@ enum CashCalendar {
                 .map { ForecastEvent(date: day, name: $0.name, amount: $0.amount, isIncome: $0.amount > 0 && !$0.isTransfer,
                                      category: $0.category, isTransfer: $0.isTransfer, gross: abs($0.amount), detail: "Already entered") }
         }
-        let futureEffect = futureLedger.filter { cashAccountIds?.contains($0.accountId) ?? true }.reduce(0) { $0 + $1.amount }
 
         // Running balance from today (or the grid start, if later) forward.
-        var running = balanceToday - futureEffect
+        var running = balanceToday
         var closingByDay: [Date: Double] = [:]
         if gridEnd >= todayStart {
             var cursor = todayStart

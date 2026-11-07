@@ -5,6 +5,7 @@ import AppKit
 struct AccountsView: View {
     @Query(sort: \Account.name) var accounts: [Account]
     @Query var transactions: [TransactionRecord]
+    private var book: BalanceBook { BalanceBook(transactions: transactions) }
     @Environment(\.modelContext) private var context
 
     /// Called with an account's OFX `accountId` to show its transactions.
@@ -26,7 +27,7 @@ struct AccountsView: View {
                                 Text("\(a.bankName) •••\(a.accountId.suffix(4))").font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Text(currency.string(from: NSNumber(value: a.balance)) ?? "$0").monospacedDigit()
+                            Text(currency.string(from: NSNumber(value: book.today(a))) ?? "$0").monospacedDigit()
                         }
                         .padding(.vertical, 4)
                         .tag(a.id)
@@ -35,7 +36,7 @@ struct AccountsView: View {
                     HStack {
                         Label(accountTypeLabel(group.type), systemImage: icon(for: group.type)).font(.subheadline.bold())
                         Spacer()
-                        Text(currency.string(from: NSNumber(value: group.items.reduce(0) { $0 + $1.balance })) ?? "")
+                        Text(currency.string(from: NSNumber(value: book.today(group.items))) ?? "")
                             .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
                     }
                 }

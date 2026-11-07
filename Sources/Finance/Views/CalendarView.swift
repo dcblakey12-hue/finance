@@ -29,7 +29,8 @@ struct CalendarView: View {
         let cash: Set<AccountType> = [.checking, .savings, .cash]
         return accounts.filter { includeAllAccounts || cash.contains($0.type) }
     }
-    private var startingBalance: Double { includedAccounts.reduce(0) { $0 + $1.balance } }
+    private var book: BalanceBook { BalanceBook(transactions: transactions) }
+    private var startingBalance: Double { book.today(includedAccounts) }
     /// Real transactions per day (included accounts), used to show past balances.
     private var actualNetByDay: [Date: Double] {
         let ids = Set(includedAccounts.map(\.accountId))
@@ -118,7 +119,7 @@ struct CalendarView: View {
 
     private var stats: some View {
         HStack(spacing: 16) {
-            stat("Balance today", money(startingBalance - ledgerEntries.filter { includedIds.contains($0.accountId) }.reduce(0) { $0 + $1.amount }), .primary)
+            stat("Balance today", money(startingBalance), .primary)
             stat("Scheduled income", money(summary.income), .green)
             stat("Scheduled bills", money(summary.expenses), .primary)
             stat("Lowest this month", lowText, (summary.low ?? 0) < 0 ? .red : .primary)

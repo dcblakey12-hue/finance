@@ -3,6 +3,8 @@ import SwiftData
 
 struct AccountsTab: View {
     @Query(sort: \Account.name) private var accounts: [Account]
+    @Query private var transactions: [TransactionRecord]
+    private var book: BalanceBook { BalanceBook(transactions: transactions) }
 
     private var groups: [AccountGroup<Account>] { AccountType.grouped(accounts, by: { $0.type }) }
     private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
@@ -22,14 +24,14 @@ struct AccountsTab: View {
                                         if !a.bankName.isEmpty { Text(a.bankName).font(.caption).foregroundStyle(.secondary) }
                                     }
                                     Spacer()
-                                    Text(money(a.balance)).monospacedDigit()
-                                        .foregroundStyle(a.balance < 0 ? .red : .primary)
+                                    Text(money(book.today(a))).monospacedDigit()
+                                        .foregroundStyle(book.today(a) < 0 ? .red : .primary)
                                 }
                             }
                         }
                     } header: {
                         HStack { Text(label(group.type)); Spacer()
-                            Text(money(group.items.reduce(0) { $0 + $1.balance })).monospacedDigit() }
+                            Text(money(book.today(group.items))).monospacedDigit() }
                     }
                 }
                 if accounts.isEmpty {

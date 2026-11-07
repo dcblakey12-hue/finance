@@ -242,6 +242,24 @@ struct ForecastOptions {
     }
 }
 
+// MARK: - Balances as of today
+
+/// An account's balance includes transactions you've booked ahead of time (dated after today).
+/// `BalanceBook` takes those out, so a bank's balance reads as it stands today.
+struct BalanceBook {
+    private let ahead: [String: Double]
+    init(transactions: [TransactionRecord], today: Date = Date(), calendar: Calendar = .current) {
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: today)) ?? today
+        var m: [String: Double] = [:]
+        for t in transactions where t.date >= tomorrow { m[t.accountId, default: 0] += t.amount }
+        ahead = m
+    }
+    /// Sum of the future-dated amounts booked in an account.
+    func booked(ahead id: String) -> Double { ahead[id] ?? 0 }
+    func today(_ a: Account) -> Double { a.balance - (ahead[a.accountId] ?? 0) }
+    func today(_ accounts: [Account]) -> Double { accounts.reduce(0) { $0 + today($1) } }
+}
+
 // MARK: - User-defined categories
 
 /// A category the user added on top of `BudgetService.defaultCategories`.
