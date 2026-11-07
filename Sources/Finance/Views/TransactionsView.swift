@@ -138,8 +138,13 @@ struct TransactionsView: View {
                 .contentShape(Rectangle())
                 .contextMenu {
                     Button("Schedule as Recurring…") {
+                        // A linked transfer pre-fills the From/To accounts.
+                        let peer = tx.transferPeerId.flatMap { byId[$0] }
+                        let out = tx.amount < 0 ? tx : peer, into = tx.amount < 0 ? peer : tx
                         scheduleEditor = ScheduleEditor(existing: nil, draft: ScheduleService.draft(
-                            fromName: tx.name, amount: tx.amount, date: tx.date, category: tx.category))
+                            fromName: tx.name, amount: tx.amount, date: tx.date, category: tx.category,
+                            transferFrom: peer == nil ? nil : out?.accountId,
+                            transferTo: peer == nil ? nil : into?.accountId))
                     }
                     Divider()
                     if let pid = tx.transferPeerId {
@@ -184,7 +189,8 @@ struct TransactionsView: View {
             }
         }
         .sheet(item: $scheduleEditor) { ed in
-            ScheduleEditorSheet(editor: ed, categories: BudgetService.allCategories(stored: customCategories.map(\.name))) { draft in
+            ScheduleEditorSheet(editor: ed, categories: BudgetService.allCategories(stored: customCategories.map(\.name)),
+                                accounts: accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }) { draft in
                 ScheduleEditor.save(draft, existing: nil, in: context)
                 scheduleEditor = nil
                 status = "Scheduled \(draft.name) for the \(draft.dueDay)\(ordinalSuffix(draft.dueDay)) of each month. See Scheduled Transactions."

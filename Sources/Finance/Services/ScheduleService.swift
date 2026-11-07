@@ -9,17 +9,27 @@ struct ScheduleDraft: Equatable {
     var category: String
     var isIncome: Bool
     var isActive: Bool = true
+    /// Transfer between two of your accounts (OFX accountIds). `isIncome` is false for these.
+    var isTransfer: Bool = false
+    var fromAccountId: String? = nil
+    var toAccountId: String? = nil
 }
 
 enum ScheduleService {
     /// Pre-fill a schedule from an existing transaction: same merchant, amount,
     /// and day of month (clamped to 28, the latest day every month has).
     static func draft(fromName name: String, amount: Double, date: Date, category: String,
+                      transferFrom: String? = nil, transferTo: String? = nil,
                       calendar: Calendar = .current) -> ScheduleDraft {
         let isIncome = amount > 0
         let day = calendar.component(.day, from: date)
         let merchant = MerchantNormalizer.key(for: name)
         let displayName = merchant.isEmpty ? name : merchant.capitalized
+        if let from = transferFrom, let to = transferTo, from != to {
+            return ScheduleDraft(name: displayName, amount: abs(amount), dueDay: min(max(day, 1), 28),
+                                 category: Categorizer.transfer, isIncome: false,
+                                 isTransfer: true, fromAccountId: from, toAccountId: to)
+        }
         let cat: String
         if isIncome { cat = "Income" }
         else if category == Categorizer.uncategorized { cat = "Other" }
@@ -50,7 +60,12 @@ struct ScheduleItem: Equatable {
     var amount: Double
     var dueDay: Int
     var category: String
-    var isIncome: Bool { amount > 0 }
+    /// Between two of your accounts: `amount` is then its positive size.
+    var isTransfer: Bool = false
+    var fromAccountId: String? = nil
+    var toAccountId: String? = nil
+    var detail: String? = nil      // e.g. "Checking → Visa"
+    var isIncome: Bool { !isTransfer && amount > 0 }
 }
 
 struct CalendarDay: Identifiable {
@@ -79,7 +94,8 @@ enum CashCalendar {
     /// Earlier days are worked backward from `balanceToday` using `actualNetByDay` (the
     /// net of real transactions per start-of-day); with none supplied they have no balance.
     static func grid(month: Date, schedules: [ScheduleItem], balanceToday: Double, today: Date = Date(),
-                     actualNetByDay: [Date: Double]? = nil, calendar: Calendar = .current) -> [CalendarDay] {
+                     actualNetByDay: [Date: Double]? = nil, cashAccountIds: Set<String>? = nil,
+                     calendar: Calendar = .current) -> [CalendarDay] {
         guard let monthInterval = calendar.dateInterval(of: .month, for: month) else { return [] }
         let first = monthInterval.start
         let daysInMonth = calendar.range(of: .day, in: .month, for: first)?.count ?? 30
@@ -99,7 +115,7 @@ enum CashCalendar {
             var cursor = todayStart
             let limit = calendar.dateComponents([.day], from: todayStart, to: gridEnd).day ?? 0
             for _ in 0...min(limit, 1500) {
-                running += events(on: cursor, schedules: schedules, calendar: calendar).reduce(0) { $0 + $1.amount }
+                running += events(on: cursor, schedules: schedules, cashAccountIds: cashAccountIds, calendar: calendar).reduce(0) { $0 + $1.amount }
                 closingByDay[cursor] = running
                 cursor = date(1, from: cursor)
             }
@@ -118,16 +134,33 @@ enum CashCalendar {
         return (0..<totalDays).map { i in
             let d = date(i, from: gridStart)
             return CalendarDay(date: d, inMonth: calendar.isDate(d, equalTo: first, toGranularity: .month),
-                               events: events(on: d, schedules: schedules, calendar: calendar),
+                               events: events(on: d, schedules: schedules, cashAccountIds: cashAccountIds, calendar: calendar),
                                closing: closingByDay[d])
         }
     }
 
-    static func events(on date: Date, schedules: [ScheduleItem], calendar: Calendar = .current) -> [ForecastEvent] {
+    /// How a scheduled item changes the balance of the accounts being tracked (`cashAccountIds`).
+    /// A transfer only matters when exactly one side is tracked: money leaving or arriving.
+    static func balanceEffect(of item: ScheduleItem, cashAccountIds: Set<String>?) -> Double {
+        guard item.isTransfer else { return item.amount }
+        guard let cash = cashAccountIds, let from = item.fromAccountId, let to = item.toAccountId else { return 0 }
+        let size = abs(item.amount)
+        switch (cash.contains(from), cash.contains(to)) {
+        case (true, false): return -size
+        case (false, true): return size
+        default: return 0
+        }
+    }
+
+    static func events(on date: Date, schedules: [ScheduleItem], cashAccountIds: Set<String>? = nil,
+                       calendar: Calendar = .current) -> [ForecastEvent] {
         let day = calendar.component(.day, from: date)
         return schedules.filter { clampedDay($0.dueDay) == day }
             .sorted { $0.name < $1.name }
-            .map { ForecastEvent(date: date, name: $0.name, amount: $0.amount, isIncome: $0.isIncome, category: $0.category) }
+            .map { ForecastEvent(date: date, name: $0.name,
+                                 amount: balanceEffect(of: $0, cashAccountIds: cashAccountIds),
+                                 isIncome: $0.isIncome, category: $0.category,
+                                 isTransfer: $0.isTransfer, gross: abs($0.amount), detail: $0.detail) }
     }
 
     /// Totals for the days that fall inside the month. Income/expenses count only today onward
@@ -138,14 +171,23 @@ enum CashCalendar {
         let upcoming = inMonth.filter { $0.date >= todayStart }
         let lowDay = inMonth.filter { $0.closing != nil }.min { ($0.closing ?? 0) < ($1.closing ?? 0) }
         return CalendarMonthSummary(
-            income: upcoming.flatMap(\.events).filter { $0.amount > 0 }.reduce(0) { $0 + $1.amount },
-            expenses: upcoming.flatMap(\.events).filter { $0.amount < 0 }.reduce(0) { $0 + abs($1.amount) },
+            income: upcoming.flatMap(\.events).filter { !$0.isTransfer && $0.amount > 0 }.reduce(0) { $0 + $1.amount },
+            expenses: upcoming.flatMap(\.events).filter { !$0.isTransfer && $0.amount < 0 }.reduce(0) { $0 + abs($1.amount) },
             low: lowDay?.closing, lowDate: lowDay?.date, closing: inMonth.last?.closing)
     }
 }
 
 extension RecurringBill {
-    var item: ScheduleItem { ScheduleItem(name: name, amount: signedAmount, dueDay: dueDay, category: category) }
+    /// Plain value for projections. `accountNames` (OFX accountId → name) labels transfers.
+    func item(accountNames: [String: String] = [:]) -> ScheduleItem {
+        var detail: String?
+        if isTransfer, let f = fromAccountId, let t = toAccountId {
+            detail = "\(accountNames[f] ?? "?") → \(accountNames[t] ?? "?")"
+        }
+        return ScheduleItem(name: name, amount: signedAmount, dueDay: dueDay, category: category,
+                            isTransfer: isTransfer, fromAccountId: fromAccountId, toAccountId: toAccountId, detail: detail)
+    }
+    var item: ScheduleItem { item() }
 }
 
 // MARK: - Scheduled transactions feed the budget
@@ -154,7 +196,7 @@ enum BudgetSync {
     /// Monthly scheduled total per expense category (active bills only).
     static func scheduledExpenses(_ items: [ScheduleItem]) -> [String: Double] {
         var out: [String: Double] = [:]
-        for i in items where !i.isIncome { out[i.category, default: 0] += abs(i.amount) }
+        for i in items where !i.isIncome && !i.isTransfer { out[i.category, default: 0] += abs(i.amount) }
         return out
     }
     static func scheduledIncome(_ items: [ScheduleItem]) -> Double {
