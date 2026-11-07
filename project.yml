@@ -44,6 +44,8 @@ targets:
         CFBundleDisplayName: Finance
         CFBundleName: Finance
         CFBundleShortVersionString: "1.0"
+        NSCalendarsFullAccessUsageDescription: Finance adds your scheduled bills and paydays to a "Finance Bills" calendar so you can see them next to your other events.
+        NSCalendarsUsageDescription: Finance adds your scheduled bills and paydays to a "Finance Bills" calendar so you can see them next to your other events.
         NSMainStoryboardFile: ""
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.finance

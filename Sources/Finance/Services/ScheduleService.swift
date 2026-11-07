@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 /// Plain values for creating or editing a scheduled transaction (RecurringBill).
 struct ScheduleDraft: Equatable {
@@ -38,5 +39,138 @@ enum ScheduleService {
             if let due = calendar.date(from: comps), due >= today { return due }
         }
         return nil
+    }
+}
+
+// MARK: - Calendar projection
+
+/// A scheduled transaction as plain values (amount is signed: + income, - expense).
+struct ScheduleItem: Equatable {
+    var name: String
+    var amount: Double
+    var dueDay: Int
+    var category: String
+    var isIncome: Bool { amount > 0 }
+}
+
+struct CalendarDay: Identifiable {
+    let date: Date
+    let inMonth: Bool
+    let events: [ForecastEvent]
+    /// Projected balance at the end of this day. Nil for days before today.
+    let closing: Double?
+    var id: Date { date }
+    var net: Double { events.reduce(0) { $0 + $1.amount } }
+}
+
+struct CalendarMonthSummary: Equatable {
+    var income: Double
+    var expenses: Double
+    var low: Double?       // lowest end-of-day balance in the month (nil if the month is entirely in the past)
+    var closing: Double?   // balance at the end of the month
+}
+
+enum CashCalendar {
+    static func clampedDay(_ d: Int) -> Int { min(max(d, 1), 28) }
+
+    /// Month grid (whole weeks) with scheduled events on each day and a running balance.
+    /// Balance starts at `balanceToday` before today's scheduled items and is only projected
+    /// from today on; earlier days have no balance.
+    static func grid(month: Date, schedules: [ScheduleItem], balanceToday: Double, today: Date = Date(),
+                     calendar: Calendar = .current) -> [CalendarDay] {
+        guard let monthInterval = calendar.dateInterval(of: .month, for: month) else { return [] }
+        let first = monthInterval.start
+        let daysInMonth = calendar.range(of: .day, in: .month, for: first)?.count ?? 30
+        let leading = (calendar.component(.weekday, from: first) - calendar.firstWeekday + 7) % 7
+        let rows = Int((Double(leading + daysInMonth) / 7).rounded(.up))
+        guard let gridStart = calendar.date(byAdding: .day, value: -leading, to: first) else { return [] }
+        let todayStart = calendar.startOfDay(for: today)
+
+        func date(_ offset: Int, from start: Date) -> Date { calendar.date(byAdding: .day, value: offset, to: start)! }
+        let totalDays = rows * 7
+        let gridEnd = date(totalDays - 1, from: gridStart)
+
+        // Running balance from today (or the grid start, if later) forward.
+        var running = balanceToday
+        var closingByDay: [Date: Double] = [:]
+        if gridEnd >= todayStart {
+            var cursor = todayStart
+            let limit = calendar.dateComponents([.day], from: todayStart, to: gridEnd).day ?? 0
+            for _ in 0...min(limit, 1500) {
+                running += events(on: cursor, schedules: schedules, calendar: calendar).reduce(0) { $0 + $1.amount }
+                closingByDay[cursor] = running
+                cursor = date(1, from: cursor)
+            }
+        }
+        return (0..<totalDays).map { i in
+            let d = date(i, from: gridStart)
+            return CalendarDay(date: d, inMonth: calendar.isDate(d, equalTo: first, toGranularity: .month),
+                               events: events(on: d, schedules: schedules, calendar: calendar),
+                               closing: closingByDay[d])
+        }
+    }
+
+    static func events(on date: Date, schedules: [ScheduleItem], calendar: Calendar = .current) -> [ForecastEvent] {
+        let day = calendar.component(.day, from: date)
+        return schedules.filter { clampedDay($0.dueDay) == day }
+            .sorted { $0.name < $1.name }
+            .map { ForecastEvent(date: date, name: $0.name, amount: $0.amount, isIncome: $0.isIncome, category: $0.category) }
+    }
+
+    /// Totals for the days that fall inside the month. Income/expenses count only today onward
+    /// (earlier days are in the past and already in your transactions).
+    static func summary(of days: [CalendarDay], today: Date = Date(), calendar: Calendar = .current) -> CalendarMonthSummary {
+        let todayStart = calendar.startOfDay(for: today)
+        let inMonth = days.filter(\.inMonth)
+        let upcoming = inMonth.filter { $0.date >= todayStart }
+        let balances = inMonth.compactMap(\.closing)
+        return CalendarMonthSummary(
+            income: upcoming.flatMap(\.events).filter { $0.amount > 0 }.reduce(0) { $0 + $1.amount },
+            expenses: upcoming.flatMap(\.events).filter { $0.amount < 0 }.reduce(0) { $0 + abs($1.amount) },
+            low: balances.min(), closing: inMonth.last?.closing)
+    }
+}
+
+extension RecurringBill {
+    var item: ScheduleItem { ScheduleItem(name: name, amount: signedAmount, dueDay: dueDay, category: category) }
+}
+
+// MARK: - Scheduled transactions feed the budget
+
+enum BudgetSync {
+    /// Monthly scheduled total per expense category (active bills only).
+    static func scheduledExpenses(_ items: [ScheduleItem]) -> [String: Double] {
+        var out: [String: Double] = [:]
+        for i in items where !i.isIncome { out[i.category, default: 0] += abs(i.amount) }
+        return out
+    }
+    static func scheduledIncome(_ items: [ScheduleItem]) -> Double {
+        items.filter(\.isIncome).reduce(0) { $0 + $1.amount }
+    }
+
+    /// Make sure every category with scheduled bills has an envelope at least as big as
+    /// those bills, for this month and any later month that already has one. Never lowers
+    /// an allocation you set higher. Returns the number of envelopes created or raised.
+    @MainActor @discardableResult
+    static func apply(in context: ModelContext, now: Date = Date(), calendar: Calendar = .current) -> Int {
+        let bills = ((try? context.fetch(FetchDescriptor<RecurringBill>())) ?? []).filter(\.isActive)
+        let required = scheduledExpenses(bills.map(\.item))
+        guard !required.isEmpty else { return 0 }
+        let year = calendar.component(.year, from: now), month = calendar.component(.month, from: now)
+        let envelopes = (try? context.fetch(FetchDescriptor<Envelope>())) ?? []
+        var changed = 0
+        for (category, total) in required {
+            let mine = envelopes.filter { $0.category == category }
+            if let current = mine.first(where: { $0.year == year && $0.month == month }) {
+                if current.allocated < total { current.allocated = total; changed += 1 }
+            } else {
+                context.insert(Envelope(category: category, year: year, month: month, allocated: total)); changed += 1
+            }
+            for e in mine where (e.year, e.month) > (year, month) && e.allocated < total {
+                e.allocated = total; changed += 1
+            }
+        }
+        try? context.save()
+        return changed
     }
 }

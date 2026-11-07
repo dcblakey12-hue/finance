@@ -1,96 +1,201 @@
 import SwiftUI
 import SwiftData
 
+/// Month calendar of scheduled transactions with a projected balance on each day,
+/// plus an option to copy the schedule into a Mac Calendar ("Finance Bills").
 struct CalendarView: View {
     @Query(sort: \RecurringBill.dueDay) var bills: [RecurringBill]
-    @Query var customCategories: [CustomCategory]
+    @Query var accounts: [Account]
     @State private var calService = CalendarService()
-    @State private var newName = ""
-    @State private var newAmount = ""
-    @State private var newDay = "15"
-    @State private var newCategory = "Housing"
-    @State private var newIsIncome = false
+    @State private var month = Date()
+    @State private var selected: Date?
+    @State private var includeAllAccounts = false
     @State private var status = ""
-    @Environment(\.modelContext) private var context
 
-    var expenses: [RecurringBill] { bills.filter { $0.isExpense } }
-    var incomes: [RecurringBill] { bills.filter { $0.isIncome } }
+    private var calendar: Calendar { .current }
+
+    /// Cash on hand: checking, savings and cash accounts (or every account if toggled).
+    private var startingBalance: Double {
+        let cash: Set<AccountType> = [.checking, .savings, .cash]
+        return accounts.filter { includeAllAccounts || cash.contains($0.type) }.reduce(0) { $0 + $1.balance }
+    }
+    private var items: [ScheduleItem] { bills.filter(\.isActive).map(\.item) }
+    private var days: [CalendarDay] {
+        CashCalendar.grid(month: month, schedules: items, balanceToday: startingBalance)
+    }
+    private var summary: CalendarMonthSummary { CashCalendar.summary(of: days) }
+
+    private static let monthFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f
+    }()
+    private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
+    private func shortMoney(_ v: Double) -> String {
+        let f = NumberFormatter(); f.numberStyle = .currency; f.maximumFractionDigits = 0; f.locale = .current
+        return f.string(from: NSNumber(value: v)) ?? ""
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Bills & Calendar").font(.largeTitle.bold())
-                Text("Scheduled transactions (bills + paydays) feed the cash-flow forecast and can sync to Apple Calendar as events in a 'Finance Bills' calendar.")
-                    .font(.caption).foregroundStyle(.secondary)
-
-                HStack {
-                    Button(calService.access == .authorized ? "Synced to Calendar ✓" : "Request Calendar Access") { Task { await calService.requestAccess() } }
-                        .buttonStyle(.borderedProminent).disabled(calService.access == .authorized)
-                    Button("Sync Bills to Calendar (12 mo)") { sync() }.buttonStyle(.bordered).disabled(calService.access != .authorized)
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                if bills.isEmpty {
+                    Text("No scheduled transactions yet. Add bills and paydays in Scheduled Transactions (or right-click a transaction → Schedule as Recurring…) and they will show up here.")
+                        .font(.callout).foregroundStyle(.secondary)
                 }
-                if !status.isEmpty { Text(status).font(.caption).foregroundStyle(.secondary) }
-
-                Text("Scheduled income (\(incomes.count))").font(.headline)
-                if incomes.isEmpty { Text("Add your payday below. Forecast estimates income from history until you do.").foregroundStyle(.secondary).font(.caption) }
-                ForEach(incomes) { b in scheduleRow(b, isIncome: true) }
-
-                Text("Recurring bills (\(expenses.count))").font(.headline)
-                if expenses.isEmpty { Text("Add your first bill below.").foregroundStyle(.secondary) }
-                ForEach(expenses) { b in scheduleRow(b, isIncome: false) }
-
-                Text("Add scheduled transaction").font(.headline)
-                Form {
-                    Picker("Type", selection: $newIsIncome) {
-                        Text("Bill (expense)").tag(false)
-                        Text("Income (payday)").tag(true)
-                    }.pickerStyle(.segmented)
-                    TextField("Name", text: $newName)
-                    TextField("Amount", text: $newAmount)
-                    TextField(newIsIncome ? "Payday (day 1-28)" : "Due day (1-28)", text: $newDay)
-                    if !newIsIncome {
-                        Picker("Category", selection: $newCategory) { ForEach(BudgetService.allCategories(stored: customCategories.map(\.name)), id: \.self) { Text($0).tag($0) } }
-                    }
-                    Button(newIsIncome ? "Add Income Schedule" : "Add Recurring Bill") { addSchedule() }
-                        .buttonStyle(.borderedProminent).disabled(newName.isEmpty || newAmount.isEmpty)
-                }.formStyle(.grouped)
-
-                Text("Upcoming in 30 days").font(.headline)
-                ForEach(calService.upcomingBills(bills)) { b in
-                    HStack {
-                        Text(b.name)
-                        Text(b.isIncome ? "INCOME" : "BILL")
-                            .font(.caption2.bold()).padding(3)
-                            .background(b.isIncome ? Color.green.opacity(0.2) : Color.red.opacity(0.15), in: Capsule())
-                        Spacer()
-                        Text("\(currency.string(from: NSNumber(value: b.amount)) ?? "") on day \(b.dueDay)")
-                    }
-                }
+                stats
+                weekdayHeader
+                grid
+                if let sel = selected { dayDetail(sel) }
+                macCalendarBox
             }.padding()
         }
         .navigationTitle("Bills & Calendar")
         .task { await calService.requestAccess() }
     }
 
-    private func scheduleRow(_ b: RecurringBill, isIncome: Bool) -> some View {
+    // MARK: - Pieces
+
+    private var header: some View {
         HStack {
-            VStack(alignment: .leading) {
-                Text(b.name).font(.headline)
-                Text("\(b.category) • due day \(b.dueDay)").font(.caption).foregroundStyle(.secondary)
-            }
+            Text(Self.monthFormatter.string(from: month)).font(.largeTitle.bold())
             Spacer()
-            Text(currency.string(from: NSNumber(value: b.amount)) ?? "").monospacedDigit()
-                .foregroundStyle(isIncome ? .green : .primary)
-            Toggle("Active", isOn: Binding(get: { b.isActive }, set: { b.isActive = $0; try? context.save() })).font(.caption)
-        }.padding(.vertical, 2)
+            Button("‹") { shift(-1) }.help("Previous month")
+            Button("Today") { month = Date(); selected = calendar.startOfDay(for: Date()) }
+            Button("›") { shift(1) }.help("Next month")
+        }
     }
 
-    private func addSchedule() {
-        let cat = newIsIncome ? "Income" : newCategory
-        let b = RecurringBill(name: newName, amount: Double(newAmount) ?? 0, dueDay: Int(newDay) ?? 15, category: cat, isIncome: newIsIncome)
-        context.insert(b); try? context.save(); newName = ""; newAmount = ""
+    private var stats: some View {
+        HStack(spacing: 16) {
+            stat("Balance today", money(startingBalance), .primary)
+            stat("Scheduled income", money(summary.income), .green)
+            stat("Scheduled bills", money(summary.expenses), .primary)
+            stat("Lowest this month", summary.low.map(money) ?? "—", (summary.low ?? 0) < 0 ? .red : .primary)
+            stat("End of month", summary.closing.map(money) ?? "—", (summary.closing ?? 0) < 0 ? .red : .primary)
+        }
+        .overlay(alignment: .bottomLeading) {
+            Toggle("Include credit cards & other accounts in balance", isOn: $includeAllAccounts)
+                .font(.caption).offset(y: 26)
+        }
+        .padding(.bottom, 26)
+    }
+
+    private func stat(_ title: String, _ value: String, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.title3.bold()).monospacedDigit().foregroundStyle(color)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var weekdayHeader: some View {
+        let symbols = calendar.shortStandaloneWeekdaySymbols
+        let shift = calendar.firstWeekday - 1
+        let ordered = Array(symbols[shift...] + symbols[..<shift])
+        return HStack(spacing: 4) {
+            ForEach(ordered, id: \.self) { Text($0).font(.caption.bold()).foregroundStyle(.secondary).frame(maxWidth: .infinity) }
+        }
+    }
+
+    private var grid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 4) {
+            ForEach(days) { day in dayCell(day) }
+        }
+    }
+
+    private func dayCell(_ day: CalendarDay) -> some View {
+        let isToday = calendar.isDateInToday(day.date)
+        let isSelected = selected.map { calendar.isDate($0, inSameDayAs: day.date) } ?? false
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text("\(calendar.component(.day, from: day.date))")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(isToday ? Color.accentColor : .clear, in: Capsule())
+                    .foregroundStyle(isToday ? Color.white : Color.primary)
+                Spacer()
+            }
+            ForEach(day.events.prefix(3)) { e in
+                Text("\(e.name) \(shortMoney(e.amount))")
+                    .font(.system(size: 10)).lineLimit(1)
+                    .padding(.horizontal, 3)
+                    .background((e.isIncome ? Color.green : Color.red).opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
+            }
+            if day.events.count > 3 { Text("+\(day.events.count - 3) more").font(.system(size: 10)).foregroundStyle(.secondary) }
+            Spacer(minLength: 0)
+            if let bal = day.closing {
+                Text(shortMoney(bal)).font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(bal < 0 ? .red : .secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+        .padding(4)
+        .frame(minHeight: 92)
+        .background(day.inMonth ? Color.gray.opacity(0.10) : Color.gray.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(isSelected ? Color.accentColor : .clear, lineWidth: 2))
+        .opacity(day.inMonth ? 1 : 0.5)
+        .contentShape(Rectangle())
+        .onTapGesture { selected = day.date }
+    }
+
+    private func dayDetail(_ date: Date) -> some View {
+        let day = days.first { calendar.isDate($0.date, inSameDayAs: date) }
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(date.formatted(date: .complete, time: .omitted)).font(.headline)
+            if let day {
+                if day.events.isEmpty { Text("Nothing scheduled.").foregroundStyle(.secondary) }
+                ForEach(day.events) { e in
+                    HStack {
+                        Text(e.name)
+                        Text(e.category).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text(money(e.amount)).monospacedDigit().foregroundStyle(e.isIncome ? .green : .primary)
+                    }
+                }
+                if let bal = day.closing {
+                    Divider()
+                    HStack { Text("Projected balance at end of day").foregroundStyle(.secondary); Spacer()
+                        Text(money(bal)).bold().monospacedDigit().foregroundStyle(bal < 0 ? .red : .primary) }
+                }
+            }
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var macCalendarBox: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Mac Calendar").font(.headline)
+            Text("Copy your scheduled bills and paydays into a \"Finance Bills\" calendar in the Calendar app (next 12 months). Re-running replaces what the app added before, so nothing is duplicated.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                if calService.isAuthorized {
+                    Button("Add to Mac Calendar") { sync() }.buttonStyle(.borderedProminent)
+                        .disabled(bills.filter(\.isActive).isEmpty)
+                    Button("Remove from Mac Calendar") { clear() }.buttonStyle(.bordered)
+                } else {
+                    Button("Allow Calendar Access") { Task { await calService.requestAccess() } }.buttonStyle(.borderedProminent)
+                    Text("Needs permission in System Settings → Privacy & Security → Calendars.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if !status.isEmpty { Text(status).font(.caption).foregroundStyle(.secondary) }
+        }
+    }
+
+    // MARK: - Actions
+
+    private func shift(_ delta: Int) {
+        month = calendar.date(byAdding: .month, value: delta, to: month) ?? month
     }
     private func sync() {
-        do { let n = try calService.syncBills(bills); status = "Synced \(n) events to Finance Bills calendar." }
-        catch { status = "Sync failed: \(error.localizedDescription)" }
+        do { let n = try calService.syncBills(bills); status = "Added \(n) events to the Finance Bills calendar." }
+        catch { status = "Calendar sync failed: \(error.localizedDescription)" }
+    }
+    private func clear() {
+        do { let n = try calService.clearSynced(); status = "Removed \(n) events from the Finance Bills calendar." }
+        catch { status = "Couldn't remove events: \(error.localizedDescription)" }
     }
 }

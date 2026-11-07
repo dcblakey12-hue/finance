@@ -421,3 +421,103 @@ final class TransferLinkTests: XCTestCase {
         XCTAssertNil(a.transferPeerId)
     }
 }
+
+final class CashCalendarTests: XCTestCase {
+    private var cal: Calendar = {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; c.firstWeekday = 1; return c
+    }()
+    private func d(_ y: Int, _ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: y, month: m, day: day))! }
+
+    private let rent = ScheduleItem(name: "Rent", amount: -1200, dueDay: 1, category: "Housing")
+    private let pay = ScheduleItem(name: "Paycheck", amount: 2000, dueDay: 15, category: "Income")
+
+    func testGridCoversWholeWeeksAndPlacesEvents() {
+        // Nov 2026 starts on a Sunday and has 30 days -> 5 rows.
+        let days = CashCalendar.grid(month: d(2026, 11, 10), schedules: [rent, pay], balanceToday: 1000,
+                                     today: d(2026, 11, 7), calendar: cal)
+        XCTAssertEqual(days.count, 35)
+        XCTAssertEqual(days.first?.date, d(2026, 11, 1))
+        XCTAssertEqual(days.filter(\.inMonth).count, 30)
+        XCTAssertEqual(days.first { cal.component(.day, from: $0.date) == 15 && $0.inMonth }?.events.map(\.name), ["Paycheck"])
+    }
+
+    func testRunningBalanceStartsToday() {
+        let days = CashCalendar.grid(month: d(2026, 11, 10), schedules: [rent, pay], balanceToday: 1000,
+                                     today: d(2026, 11, 7), calendar: cal)
+        func closing(_ day: Int) -> Double? { days.first { $0.date == d(2026, 11, day) }?.closing }
+        XCTAssertNil(closing(1))                 // past: no projection
+        XCTAssertEqual(closing(7), 1000)         // nothing due today
+        XCTAssertEqual(closing(15), 3000)        // payday
+        XCTAssertEqual(closing(30), 3000)
+    }
+
+    func testBalanceCarriesAcrossMonths() {
+        let days = CashCalendar.grid(month: d(2026, 12, 1), schedules: [rent, pay], balanceToday: 1000,
+                                     today: d(2026, 11, 7), calendar: cal)
+        func closing(_ day: Int) -> Double? { days.first { $0.date == d(2026, 12, day) }?.closing }
+        // Nov 15 +2000 = 3000; Dec 1 -1200 = 1800; Dec 15 +2000 = 3800
+        XCTAssertEqual(closing(1), 1800)
+        XCTAssertEqual(closing(15), 3800)
+    }
+
+    func testSummaryAndPastMonth() {
+        let days = CashCalendar.grid(month: d(2026, 12, 1), schedules: [rent, pay], balanceToday: 1000,
+                                     today: d(2026, 11, 7), calendar: cal)
+        let s = CashCalendar.summary(of: days, today: d(2026, 11, 7), calendar: cal)
+        XCTAssertEqual(s.income, 2000); XCTAssertEqual(s.expenses, 1200)
+        XCTAssertEqual(s.low, 1800); XCTAssertEqual(s.closing, 3800)
+
+        let past = CashCalendar.grid(month: d(2026, 9, 1), schedules: [rent], balanceToday: 1000,
+                                     today: d(2026, 11, 7), calendar: cal)
+        XCTAssertNil(CashCalendar.summary(of: past, today: d(2026, 11, 7), calendar: cal).low)
+    }
+
+    func testDaysAreClampedTo28() {
+        let late = ScheduleItem(name: "Late", amount: -10, dueDay: 31, category: "Other")
+        XCTAssertEqual(CashCalendar.events(on: d(2026, 2, 28), schedules: [late], calendar: cal).count, 1)
+        XCTAssertEqual(CashCalendar.events(on: d(2026, 1, 31), schedules: [late], calendar: cal).count, 0)
+    }
+}
+
+@MainActor
+final class BudgetSyncTests: XCTestCase {
+    private var context: ModelContext!
+    override func setUp() async throws {
+        let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        context = ModelContext(container)
+    }
+
+    func testTotalsPerCategory() {
+        let items = [ScheduleItem(name: "A", amount: -100, dueDay: 1, category: "Housing"),
+                     ScheduleItem(name: "B", amount: -50, dueDay: 2, category: "Housing"),
+                     ScheduleItem(name: "Pay", amount: 900, dueDay: 3, category: "Income")]
+        XCTAssertEqual(BudgetSync.scheduledExpenses(items), ["Housing": 150])
+        XCTAssertEqual(BudgetSync.scheduledIncome(items), 900)
+    }
+
+    func testApplyCreatesRaisesAndNeverLowers() {
+        let now = Date(); let cal = Calendar.current
+        let y = cal.component(.year, from: now), m = cal.component(.month, from: now)
+        context.insert(RecurringBill(name: "Rent", amount: 1200, dueDay: 1, category: "Housing"))
+        context.insert(RecurringBill(name: "Water", amount: 80, dueDay: 5, category: "Utilities"))
+        context.insert(RecurringBill(name: "Old", amount: 500, dueDay: 5, category: "Fun", isActive: false))
+        context.insert(Envelope(category: "Utilities", year: y, month: m, allocated: 200))   // already bigger
+        context.insert(Envelope(category: "Housing", year: y, month: m, allocated: 1000))    // too small
+        XCTAssertEqual(BudgetSync.apply(in: context, now: now, calendar: cal), 1)
+        let all = try! context.fetch(FetchDescriptor<Envelope>())
+        func alloc(_ c: String) -> Double? { all.first { $0.category == c }?.allocated }
+        XCTAssertEqual(alloc("Housing"), 1200)
+        XCTAssertEqual(alloc("Utilities"), 200)
+        XCTAssertNil(alloc("Fun"))                                                            // inactive ignored
+        // Idempotent.
+        XCTAssertEqual(BudgetSync.apply(in: context, now: now, calendar: cal), 0)
+    }
+
+    func testApplyCreatesMissingEnvelope() {
+        context.insert(RecurringBill(name: "Gym", amount: 40, dueDay: 3, category: "Health"))
+        XCTAssertEqual(BudgetSync.apply(in: context), 1)
+        XCTAssertEqual(try! context.fetch(FetchDescriptor<Envelope>()).first?.allocated, 40)
+    }
+}

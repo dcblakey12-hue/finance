@@ -4,6 +4,7 @@ import SwiftData
 struct BudgetView: View {
     @Query(sort: \TransactionRecord.date, order: .reverse) var transactions: [TransactionRecord]
     @Query var envelopes: [Envelope]
+    @Query var schedules: [RecurringBill]
     @Query var accounts: [Account]
     @Query var customCategories: [CustomCategory]
     @Environment(\.modelContext) private var context
@@ -14,6 +15,7 @@ struct BudgetView: View {
     @State private var now = Date()
     @State private var editAmounts: [String: String] = [:]
     @State private var editedCategory: String = ""
+    @State private var applied: Int?
 
     var year: Int { Calendar.current.component(.year, from: now) }
     var month: Int { Calendar.current.component(.month, from: now) }
@@ -25,6 +27,9 @@ struct BudgetView: View {
         let ids = Set(accounts.filter { $0.type == .checking }.map(\.accountId))
         return ids.isEmpty ? nil : ids
     }
+    private var scheduleItems: [ScheduleItem] { schedules.filter(\.isActive).map(\.item) }
+    private var scheduledByCategory: [String: Double] { BudgetSync.scheduledExpenses(scheduleItems) }
+    private var scheduledIncome: Double { BudgetSync.scheduledIncome(scheduleItems) }
     var summary: MonthlySummary {
         BudgetService.summary(year: year, month: month, transactions: transactions, incomeAccountIds: checkingAccountIds)
     }
@@ -55,7 +60,17 @@ struct BudgetView: View {
                                 onOpenTransactions(TransactionFilters(month: selectedMonthStart, flow: .spending))
                             })
                     KpiCard(title: "Balance (income − spent)", value: currency.string(from: NSNumber(value: summary.net)) ?? "", icon: "scalemass")
-                    KpiCard(title: "Left to budget", value: currency.string(from: NSNumber(value: summary.income - thisMonth.reduce(0) { $0 + $1.allocated })) ?? "", icon: "envelope")
+                    KpiCard(title: scheduledIncome > summary.income ? "Left to budget (planned income)" : "Left to budget", value: currency.string(from: NSNumber(value: max(summary.income, scheduledIncome) - thisMonth.reduce(0) { $0 + $1.allocated })) ?? "", icon: "envelope")
+                }
+                if !schedules.isEmpty {
+                    HStack {
+                        Text("Scheduled each month: income \(currency.string(from: NSNumber(value: scheduledIncome)) ?? ""), bills \(currency.string(from: NSNumber(value: scheduledByCategory.values.reduce(0, +))) ?? "").")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Add scheduled bills to budget") { applied = BudgetSync.apply(in: context) }
+                            .font(.caption).buttonStyle(.link)
+                            .help("Raises each category's envelope to at least its scheduled bills (this month and later). Never lowers one.")
+                        if let n = applied { Text(n == 0 ? "Already covered." : "Updated \(n).").font(.caption).foregroundStyle(.secondary) }
+                    }
                 }
                 Text("Tap an amount to edit. Spent updates automatically from transactions in that category.").font(.caption).foregroundStyle(.secondary)
 
@@ -66,7 +81,13 @@ struct BudgetView: View {
                     let progress = allocated > 0 ? min(spent / allocated, 1) : 0
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(cat).font(.headline)
+                            HStack(spacing: 6) {
+                                Text(cat).font(.headline)
+                                if let sch = scheduledByCategory[cat] {
+                                    Text("scheduled \(currency.string(from: NSNumber(value: sch)) ?? "")")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
                             ProgressView(value: progress).tint(spent > allocated && allocated > 0 ? .red : .accentColor)
                         }
                         Spacer()

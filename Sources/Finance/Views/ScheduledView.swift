@@ -131,6 +131,8 @@ struct ScheduleEditor: Identifiable {
             context.insert(s)
         }
         try? context.save()
+        // A scheduled bill is part of the plan: make sure its category's envelope covers it.
+        BudgetSync.apply(in: context)
     }
 }
 

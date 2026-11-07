@@ -148,9 +148,11 @@ enum RunningBalance {
 @MainActor
 @Observable
 final class CalendarService {
-    var access: EKAuthorizationStatus = .notDetermined
+    var access: EKAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
     private let store = EKEventStore()
-    var financeCalendarID: String?
+    static let calendarTitle = "Finance Bills"
+    static let marker = "Synced by Finance app"
+    var isAuthorized: Bool { access == .fullAccess }
 
     func requestAccess() async {
         do { _ = try await store.requestFullAccessToEvents() } catch {}
@@ -159,40 +161,57 @@ final class CalendarService {
 
     var calendars: [EKCalendar] { store.calendars(for: .event) }
 
+    /// The "Finance Bills" calendar: reused if it exists (by title), otherwise created.
     func ensureFinanceCalendar() -> EKCalendar? {
-        if let id = financeCalendarID, let cal = store.calendar(withIdentifier: id) { return cal }
+        if let existing = store.calendars(for: .event).first(where: { $0.title == Self.calendarTitle }) { return existing }
         guard let defaultCal = store.defaultCalendarForNewEvents ?? store.calendars(for: .event).first else { return nil }
         let cal = EKCalendar(for: .event, eventStore: store)
-        cal.title = "Finance Bills"
+        cal.title = Self.calendarTitle
         cal.source = defaultCal.source
-        do {
-            try store.saveCalendar(cal, commit: true)
-            financeCalendarID = cal.calendarIdentifier
-            return cal
-        } catch { return nil }
+        do { try store.saveCalendar(cal, commit: true); return cal } catch { return nil }
     }
 
-    /// Create one event per active bill for the next N months in Finance Bills calendar.
+    /// Remove events this app created (from a month ago to five years out). Returns how many.
+    @discardableResult
+    func clearSynced() throws -> Int {
+        guard let cal = store.calendars(for: .event).first(where: { $0.title == Self.calendarTitle }) else { return 0 }
+        let start = Calendar.current.date(byAdding: .month, value: -1, to: Date())!
+        let end = Calendar.current.date(byAdding: .year, value: 5, to: Date())!
+        let mine = store.events(matching: store.predicateForEvents(withStart: start, end: end, calendars: [cal]))
+            .filter { $0.notes?.contains(Self.marker) == true }
+        for ev in mine { try store.remove(ev, span: .thisEvent, commit: false) }
+        try store.commit()
+        return mine.count
+    }
+
+    /// Replace the app's events in the Finance Bills calendar with one all-day event per
+    /// active scheduled transaction per month for the next `months` months. Safe to re-run:
+    /// earlier synced events are removed first, so nothing is duplicated.
     func syncBills(_ bills: [RecurringBill], months: Int = 12) throws -> Int {
         guard let cal = ensureFinanceCalendar() else { throw NSError(domain: "Calendar", code: 1, userInfo: [NSLocalizedDescriptionKey: "No calendar available"]) }
+        try clearSynced()
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
         var created = 0
-        let now = Date()
-        for bill in bills where bill.isActive {
-            for offset in 0..<months {
-                guard let date = Calendar.current.date(byAdding: .month, value: offset, to: now),
-                      let due = Calendar.current.date(from: DateComponents(year: Calendar.current.component(.year, from: date), month: Calendar.current.component(.month, from: date), day: bill.dueDay)) else { continue }
-                if due < now.addingTimeInterval(-86_400) { continue }
+        for offset in 0..<months {
+            guard let monthDate = calendar.date(byAdding: .month, value: offset, to: today) else { continue }
+            let monthStart = calendar.dateInterval(of: .month, for: monthDate)?.start ?? monthDate
+            for bill in bills where bill.isActive {
+                guard let due = calendar.date(byAdding: .day, value: CashCalendar.clampedDay(bill.dueDay) - 1, to: monthStart),
+                      due >= today else { continue }
                 let ev = EKEvent(eventStore: store)
-                ev.title = "\(bill.name) — $\(String(format: "%.2f", bill.amount))"
-                ev.startDate = Calendar.current.startOfDay(for: due)
-                ev.endDate = Calendar.current.date(byAdding: .hour, value: 1, to: due)
+                let amount = currency.string(from: NSNumber(value: abs(bill.amount))) ?? String(format: "$%.2f", abs(bill.amount))
+                ev.title = bill.isIncome ? "\(bill.name) — +\(amount)" : "\(bill.name) — \(amount)"
+                ev.isAllDay = true
+                ev.startDate = due
+                ev.endDate = due
                 ev.calendar = cal
-                ev.notes = "Category: \(bill.category)\nSynced by Finance app"
-                if bill.lastPaid != nil { ev.notes! += "\nLast paid: \(bill.lastPaid!)" }
-                try store.save(ev, span: .thisEvent, commit: true)
+                ev.notes = "Category: \(bill.category)\n\(Self.marker)"
+                try store.save(ev, span: .thisEvent, commit: false)
                 created += 1
             }
         }
+        try store.commit()
         return created
     }
 
