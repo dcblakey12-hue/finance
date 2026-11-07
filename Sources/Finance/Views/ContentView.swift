@@ -20,10 +20,6 @@ enum AppSection: String, CaseIterable, Identifiable {
     }
 }
 
-let currency: NumberFormatter = {
-    let f = NumberFormatter(); f.numberStyle = .currency; f.locale = .current; return f
-}()
-
 struct ContentView: View {
     @Environment(\.modelContext) private var context
     @State private var selection: AppSection? = .dashboard

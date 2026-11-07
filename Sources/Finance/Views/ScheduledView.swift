@@ -127,22 +127,7 @@ struct ScheduleEditor: Identifiable {
 
     @MainActor
     static func save(_ d: ScheduleDraft, existing: RecurringBill?, in context: ModelContext) {
-        let category = d.isTransfer ? Categorizer.transfer : (d.isIncome ? "Income" : d.category)
-        let kind = d.isTransfer ? "transfer" : (d.isIncome ? "credit" : "debit")
-        let from = d.isTransfer ? d.fromAccountId : nil, to = d.isTransfer ? d.toAccountId : nil
-        if let s = existing {
-            s.name = d.name; s.amount = abs(d.amount); s.dueDay = d.dueDay
-            s.category = category; s.kindRaw = kind; s.isActive = d.isActive
-            s.fromAccountId = from; s.toAccountId = to
-        } else {
-            let s = RecurringBill(name: d.name, amount: abs(d.amount), dueDay: d.dueDay, category: category,
-                                  isActive: d.isActive, isIncome: d.isIncome && !d.isTransfer)
-            s.kindRaw = kind; s.fromAccountId = from; s.toAccountId = to
-            context.insert(s)
-        }
-        try? context.save()
-        // A scheduled bill is part of the plan: make sure its category's envelope covers it.
-        BudgetSync.apply(in: context)
+        ScheduleService.save(d, existing: existing, in: context)
     }
 }
 
