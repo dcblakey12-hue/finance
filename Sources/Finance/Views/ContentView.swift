@@ -25,6 +25,8 @@ let currency: NumberFormatter = {
 
 struct ContentView: View {
     @State private var selection: AppSection? = .dashboard
+    /// OFX accountId shown in Transactions; nil = all accounts.
+    @State private var transactionsAccount: String?
     var body: some View {
         NavigationSplitView {
             List(AppSection.allCases, selection: $selection) { s in
@@ -35,8 +37,12 @@ struct ContentView: View {
             if let sel = selection {
                 switch sel {
                 case .dashboard: DashboardView()
-                case .accounts: AccountsView()
-                case .transactions: TransactionsView()
+                case .accounts:
+                    AccountsView(onOpenTransactions: { acctId in
+                        transactionsAccount = acctId
+                        selection = .transactions
+                    })
+                case .transactions: TransactionsView(accountFilter: $transactionsAccount)
                 case .budget: BudgetView()
                 case .calendar: CalendarView()
                 case .forecast: ForecastView()

@@ -3,12 +3,17 @@ import SwiftData
 
 struct TransactionsView: View {
     @Query(sort: \TransactionRecord.date, order: .reverse) var transactions: [TransactionRecord]
+    @Query(sort: \Account.name) var accounts: [Account]
+    /// OFX accountId to show; nil = all accounts. Owned by ContentView so
+    /// double-clicking an account in Accounts can preselect it.
+    @Binding var accountFilter: String?
     @State private var search = ""
     @State private var categoryFilter: String = "All"
     @State private var status: String?
 
     var filtered: [TransactionRecord] {
         transactions.filter { t in
+            (accountFilter == nil || t.accountId == accountFilter) &&
             (categoryFilter == "All" || t.category == categoryFilter) &&
             (search.isEmpty || t.name.localizedCaseInsensitiveContains(search) || t.memo.localizedCaseInsensitiveContains(search))
         }
@@ -18,6 +23,11 @@ struct TransactionsView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
+                Picker("Account", selection: $accountFilter) {
+                    Text("All accounts").tag(String?.none)
+                    ForEach(accounts) { a in Text(a.name).tag(String?.some(a.accountId)) }
+                }
+                .frame(maxWidth: 220)
                 TextField("Search transactions", text: $search).textFieldStyle(.roundedBorder)
                 Picker("Category", selection: $categoryFilter) {
                     Text("All").tag("All")
@@ -66,7 +76,7 @@ struct TransactionsView: View {
                 .padding(.vertical, 2)
             }
         }
-        .navigationTitle("Transactions")
+        .navigationTitle(accounts.first { $0.accountId == accountFilter }?.name ?? "Transactions")
     }
     @Environment(\.modelContext) private var context
 }

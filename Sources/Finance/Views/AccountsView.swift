@@ -4,86 +4,214 @@ import AppKit
 
 struct AccountsView: View {
     @Query(sort: \Account.name) var accounts: [Account]
-    @State private var showingAdd = false
-    @State private var newName = ""
-    @State private var newAccountId = ""
-    @State private var newBalance = ""
+    @Query var transactions: [TransactionRecord]
+    @Environment(\.modelContext) private var context
 
-    enum Field: Hashable { case name, accountId, balance }
-    @FocusState private var focusedField: Field?
+    /// Called with an account's OFX `accountId` to show its transactions.
+    var onOpenTransactions: (String) -> Void = { _ in }
+
+    @State private var selection = Set<UUID>()
+    @State private var editor: AccountEditor?
+    @State private var pendingDelete: Account?
 
     var body: some View {
-        List(accounts) { a in
+        List(accounts, selection: $selection) { a in
             HStack {
-                Image(systemName: "building.columns").foregroundStyle(.secondary)
-                VStack(alignment: .leading) { Text(a.name).font(.headline); Text("\(a.typeRaw) • \(a.bankName) •••\(a.accountId.suffix(4))").font(.caption).foregroundStyle(.secondary) }
+                Image(systemName: icon(for: a.type)).foregroundStyle(.secondary)
+                VStack(alignment: .leading) {
+                    Text(a.name).font(.headline)
+                    Text("\(accountTypeLabel(a.type)) • \(a.bankName) •••\(a.accountId.suffix(4))").font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
                 Text(currency.string(from: NSNumber(value: a.balance)) ?? "$0").monospacedDigit()
             }
             .padding(.vertical, 4)
+            .tag(a.id)
+        }
+        .contextMenu(forSelectionType: UUID.self) { ids in
+            if let a = account(for: ids) {
+                Button("Show Transactions") { onOpenTransactions(a.accountId) }
+                Button("Edit…") { editor = AccountEditor(account: a) }
+                Divider()
+                Button("Delete…", role: .destructive) { pendingDelete = a }
+            }
+        } primaryAction: { ids in
+            // Double-click (or Return) opens the account's transactions.
+            if let a = account(for: ids) { onOpenTransactions(a.accountId) }
         }
         .navigationTitle("Accounts")
         .toolbar {
-            ToolbarItem(placement: .primaryAction) { Button("Add Account") { showingAdd = true } }
+            ToolbarItem(placement: .primaryAction) { Button("Add Account") { editor = AccountEditor(account: nil) } }
         }
-        .sheet(isPresented: $showingAdd) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Add Account").font(.headline)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Name").font(.caption).foregroundStyle(.secondary)
-                    TextField("Checking", text: $newName)
-                        .focused($focusedField, equals: .name)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                        .onSubmit { focusedField = .accountId }
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Account ID (OFX ACCTID)").font(.caption).foregroundStyle(.secondary)
-                    TextField("•••• last 4 shown in UI", text: $newAccountId)
-                        .focused($focusedField, equals: .accountId)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                        .onSubmit { focusedField = .balance }
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Opening balance (optional)").font(.caption).foregroundStyle(.secondary)
-                    TextField("0.00", text: $newBalance)
-                        .focused($focusedField, equals: .balance)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                        .onSubmit { submit() }
-                }
-                HStack {
-                    Spacer()
-                    Button("Cancel") { showingAdd = false }
-                        .keyboardShortcut(.cancelAction)
-                    Button(newName.isEmpty || newAccountId.isEmpty ? "Add (need name + ID)" : "Add Account") { submit() }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(newName.isEmpty || newAccountId.isEmpty)
-                }
+        .sheet(item: $editor) { ed in
+            AccountEditorSheet(editor: ed, existingIds: Set(accounts.map(\.accountId))) { result in
+                save(result, editing: ed.account)
+                editor = nil
+            } onCancel: { editor = nil }
+        }
+        .confirmationDialog(deleteTitle, isPresented: Binding(
+            get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
+        ), titleVisibility: .visible) {
+            Button("Delete Account and Transactions", role: .destructive) {
+                if let a = pendingDelete { delete(a) }
+                pendingDelete = nil
             }
-            .padding(20)
-            .frame(width: 380)
-            .onAppear {
-                // Sheet + window must be key, then put cursor in Name.
-                if let window = NSApp.keyWindow ?? NSApp.windows.first {
-                    window.makeKeyAndOrderFront(nil)
-                }
-                // Delay so the sheet window is in the responder chain before focusing.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    focusedField = .name
-                }
-            }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+        } message: {
+            Text("This can't be undone. Re-importing the account's OFX file brings its transactions back.")
         }
     }
-    @Environment(\.modelContext) private var context
+
+    // MARK: - Helpers
+
+    private func account(for ids: Set<UUID>) -> Account? {
+        guard ids.count == 1, let id = ids.first else { return nil }
+        return accounts.first { $0.id == id }
+    }
+
+    private var deleteTitle: String {
+        guard let a = pendingDelete else { return "Delete account?" }
+        let n = transactions.filter { $0.accountId == a.accountId }.count
+        return "Delete “\(a.name)” and its \(n) transaction\(n == 1 ? "" : "s")?"
+    }
+
+    private func delete(_ a: Account) {
+        let acctId = a.accountId
+        for tx in transactions where tx.accountId == acctId { context.delete(tx) }
+        selection.remove(a.id)
+        context.delete(a)
+        try? context.save()
+    }
+
+    private func save(_ r: AccountEditor.Result, editing existing: Account?) {
+        if let a = existing {
+            let oldId = a.accountId
+            a.name = r.name; a.typeRaw = r.type.rawValue; a.bankName = r.bankName
+            a.accountId = r.accountId; a.balance = r.balance
+            // Keep transactions linked to the account and showing its current name.
+            for tx in transactions where tx.accountId == oldId {
+                tx.accountId = r.accountId; tx.accountName = r.name
+            }
+        } else {
+            context.insert(Account(name: r.name, type: r.type, accountId: r.accountId, bankName: r.bankName, balance: r.balance))
+        }
+        try? context.save()
+    }
+
+    private func icon(for t: AccountType) -> String {
+        switch t {
+        case .checking, .savings: return "building.columns"
+        case .creditCard: return "creditcard"
+        case .investment: return "chart.line.uptrend.xyaxis"
+        case .cash: return "banknote"
+        }
+    }
+}
+
+func accountTypeLabel(_ t: AccountType) -> String {
+    switch t {
+    case .checking: return "Checking"
+    case .savings: return "Savings"
+    case .creditCard: return "Credit Card"
+    case .investment: return "Investment"
+    case .cash: return "Cash"
+    }
+}
+
+// MARK: - Add / Edit sheet
+
+struct AccountEditor: Identifiable {
+    let id = UUID()
+    let account: Account?   // nil = adding a new account
+
+    struct Result { var name: String; var type: AccountType; var bankName: String; var accountId: String; var balance: Double }
+}
+
+private struct AccountEditorSheet: View {
+    let editor: AccountEditor
+    let existingIds: Set<String>
+    let onSave: (AccountEditor.Result) -> Void
+    let onCancel: () -> Void
+
+    @State private var name = ""
+    @State private var type: AccountType = .checking
+    @State private var bankName = ""
+    @State private var accountId = ""
+    @State private var balance = ""
+
+    enum Field: Hashable { case name, bank, accountId, balance }
+    @FocusState private var focusedField: Field?
+
+    private var isEditing: Bool { editor.account != nil }
+    private var idTaken: Bool { accountId != editor.account?.accountId && existingIds.contains(accountId) }
+    private var canSave: Bool { !name.isEmpty && !accountId.isEmpty && !idTaken }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(isEditing ? "Edit Account" : "Add Account").font(.headline)
+            field("Name") {
+                TextField("Checking", text: $name)
+                    .focused($focusedField, equals: .name)
+                    .onSubmit { focusedField = .bank }
+            }
+            field("Type") {
+                Picker("Type", selection: $type) {
+                    ForEach(AccountType.allCases, id: \.self) { Text(accountTypeLabel($0)).tag($0) }
+                }.labelsHidden()
+            }
+            field("Bank") {
+                TextField("Manual", text: $bankName)
+                    .focused($focusedField, equals: .bank)
+                    .onSubmit { focusedField = .accountId }
+            }
+            field(idTaken ? "Account ID (already used by another account)" : "Account ID (OFX ACCTID)") {
+                TextField("•••• last 4 shown in UI", text: $accountId)
+                    .focused($focusedField, equals: .accountId)
+                    .onSubmit { focusedField = .balance }
+            }
+            field(isEditing ? "Balance" : "Opening balance (optional)") {
+                TextField("0.00", text: $balance)
+                    .focused($focusedField, equals: .balance)
+                    .onSubmit { submit() }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                Button(isEditing ? "Save" : "Add Account") { submit() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canSave)
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+        .autocorrectionDisabled()
+        .padding(20)
+        .frame(width: 380)
+        .onAppear {
+            if let a = editor.account {
+                name = a.name; type = a.type; bankName = a.bankName; accountId = a.accountId
+                balance = String(format: "%.2f", a.balance)
+            } else {
+                bankName = "Manual"
+            }
+            // Sheet + window must be key, then put cursor in Name.
+            if let window = NSApp.keyWindow ?? NSApp.windows.first { window.makeKeyAndOrderFront(nil) }
+            // Delay so the sheet window is in the responder chain before focusing.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { focusedField = .name }
+        }
+    }
+
+    private func field<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(idTaken && title.hasPrefix("Account ID") ? .red : .secondary)
+            content()
+        }
+    }
 
     private func submit() {
-        guard !newName.isEmpty, !newAccountId.isEmpty else { return }
-        let a = Account(name: newName, type: .checking, accountId: newAccountId, bankName: "Manual", balance: Double(newBalance) ?? 0)
-        context.insert(a); try? context.save()
-        newName = ""; newAccountId = ""; newBalance = ""
-        showingAdd = false
+        guard canSave else { return }
+        let cleanedBalance = balance.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: "")
+        onSave(.init(name: name, type: type, bankName: bankName.isEmpty ? "Manual" : bankName,
+                     accountId: accountId, balance: Double(cleanedBalance) ?? 0))
     }
 }
