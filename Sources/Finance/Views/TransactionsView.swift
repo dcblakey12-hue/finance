@@ -39,6 +39,9 @@ struct TransactionsView: View {
     }
     private var shownNet: Double { filtered.reduce(0) { $0 + $1.amount } }
 
+    /// Picker tag for the "New Category…" row; never stored as a real category.
+    private static let newCategoryChoice = "\u{0}new-category"
+
     /// Categories in use, for the filter menu.
     var usedCategories: [String] { Array(Set(transactions.map { $0.category })).sorted() }
     /// Every category a transaction can be set to.
@@ -83,9 +86,14 @@ struct TransactionsView: View {
                     Spacer()
                     Picker("Category", selection: Binding(
                         get: { tx.category },
-                        set: { setCategory($0, on: tx) }
+                        set: { choice in
+                            if choice == Self.newCategoryChoice { newCategoryFor = tx }
+                            else { setCategory(choice, on: tx) }
+                        }
                     )) {
                         ForEach(Array(Set(assignableCategories + [tx.category])).sorted(), id: \.self) { c in Text(c).tag(c) }
+                        Divider()
+                        Text("New Category…").tag(Self.newCategoryChoice)
                     }
                     .labelsHidden()
                     .frame(width: 150)
@@ -105,13 +113,6 @@ struct TransactionsView: View {
                     Button("Schedule as Recurring…") {
                         scheduleEditor = ScheduleEditor(existing: nil, draft: ScheduleService.draft(
                             fromName: tx.name, amount: tx.amount, date: tx.date, category: tx.category))
-                    }
-                    Menu("Set Category") {
-                        ForEach(assignableCategories, id: \.self) { c in
-                            Button(c) { setCategory(c, on: tx) }
-                        }
-                        Divider()
-                        Button("New Category…") { newCategoryFor = tx }
                     }
                 }
             }
