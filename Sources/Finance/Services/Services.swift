@@ -436,6 +436,7 @@ struct BackupFile: Codable, Equatable {
     }
 }
 
+@MainActor
 enum BackupService {
     static func snapshot(in context: ModelContext, now: Date = Date()) -> BackupFile {
         func all<T: PersistentModel>(_: T.Type) -> [T] { (try? context.fetch(FetchDescriptor<T>())) ?? [] }
