@@ -50,7 +50,7 @@ struct ImportView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("OFX server sync (where your bank still supports it)").font(.headline)
-                    Text("An OFX file doesn't include the server address. Enter the bank's OFX URL (look it up at ofxhome.com by the institution name or FID shown above). Password is stored only in your Keychain. Many banks have disabled direct OFX — file import above is the fallback.")
+                    Text("An OFX file doesn't include the server address. Enter the bank's OFX URL (search for your bank's “OFX Direct Connect” URL, or ask the bank). Password is stored only in your Keychain. Many banks have disabled direct OFX — file import above is the fallback.")
                         .font(.caption).foregroundStyle(.secondary)
                     Form {
                         TextField("Bank name / ID", text: $bankName)
