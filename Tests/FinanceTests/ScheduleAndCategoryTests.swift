@@ -521,3 +521,20 @@ final class BudgetSyncTests: XCTestCase {
         XCTAssertEqual(try! context.fetch(FetchDescriptor<Envelope>()).first?.allocated, 40)
     }
 }
+
+final class CashCalendarPastBalanceTests: XCTestCase {
+    func testPastDaysWorkBackwardFromToday() {
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!
+        func d(_ day: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: 11, day: day))! }
+        // Balance is 1000 today (Nov 7). Spent 100 on Nov 6 and earned 500 on Nov 3.
+        let days = CashCalendar.grid(month: d(7), schedules: [], balanceToday: 1000, today: d(7),
+                                     actualNetByDay: [d(6): -100, d(3): 500], calendar: cal)
+        func closing(_ day: Int) -> Double? { days.first { $0.date == d(day) }?.closing }
+        XCTAssertEqual(closing(7), 1000)
+        XCTAssertEqual(closing(6), 1000)   // end of Nov 6 = today's balance (nothing posted today)
+        XCTAssertEqual(closing(5), 1100)   // before the -100
+        XCTAssertEqual(closing(3), 1100)
+        XCTAssertEqual(closing(2), 600)    // before the +500
+        XCTAssertEqual(closing(1), 600)
+    }
+}

@@ -74,10 +74,11 @@ enum CashCalendar {
     static func clampedDay(_ d: Int) -> Int { min(max(d, 1), 28) }
 
     /// Month grid (whole weeks) with scheduled events on each day and a running balance.
-    /// Balance starts at `balanceToday` before today's scheduled items and is only projected
-    /// from today on; earlier days have no balance.
+    /// From today on, the balance starts at `balanceToday` and applies scheduled items.
+    /// Earlier days are worked backward from `balanceToday` using `actualNetByDay` (the
+    /// net of real transactions per start-of-day); with none supplied they have no balance.
     static func grid(month: Date, schedules: [ScheduleItem], balanceToday: Double, today: Date = Date(),
-                     calendar: Calendar = .current) -> [CalendarDay] {
+                     actualNetByDay: [Date: Double]? = nil, calendar: Calendar = .current) -> [CalendarDay] {
         guard let monthInterval = calendar.dateInterval(of: .month, for: month) else { return [] }
         let first = monthInterval.start
         let daysInMonth = calendar.range(of: .day, in: .month, for: first)?.count ?? 30
@@ -100,6 +101,17 @@ enum CashCalendar {
                 running += events(on: cursor, schedules: schedules, calendar: calendar).reduce(0) { $0 + $1.amount }
                 closingByDay[cursor] = running
                 cursor = date(1, from: cursor)
+            }
+        }
+        // Past days: balance at the end of day d = balanceToday minus real activity after d, through today.
+        if let actual = actualNetByDay, gridStart < todayStart {
+            var back = balanceToday - (actual[todayStart] ?? 0)   // end of yesterday
+            var cursor = date(-1, from: todayStart)
+            let limit = min(calendar.dateComponents([.day], from: gridStart, to: todayStart).day ?? 0, 1500)
+            for _ in 0..<limit {
+                closingByDay[cursor] = back
+                back -= actual[cursor] ?? 0
+                cursor = date(-1, from: cursor)
             }
         }
         return (0..<totalDays).map { i in

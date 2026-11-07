@@ -6,6 +6,7 @@ import SwiftData
 struct CalendarView: View {
     @Query(sort: \RecurringBill.dueDay) var bills: [RecurringBill]
     @Query var accounts: [Account]
+    @Query var transactions: [TransactionRecord]
     @State private var calService = CalendarService()
     @State private var month = Date()
     @State private var selected: Date?
@@ -15,13 +16,21 @@ struct CalendarView: View {
     private var calendar: Calendar { .current }
 
     /// Cash on hand: checking, savings and cash accounts (or every account if toggled).
-    private var startingBalance: Double {
+    private var includedAccounts: [Account] {
         let cash: Set<AccountType> = [.checking, .savings, .cash]
-        return accounts.filter { includeAllAccounts || cash.contains($0.type) }.reduce(0) { $0 + $1.balance }
+        return accounts.filter { includeAllAccounts || cash.contains($0.type) }
+    }
+    private var startingBalance: Double { includedAccounts.reduce(0) { $0 + $1.balance } }
+    /// Real transactions per day (included accounts), used to show past balances.
+    private var actualNetByDay: [Date: Double] {
+        let ids = Set(includedAccounts.map(\.accountId))
+        var out: [Date: Double] = [:]
+        for t in transactions where ids.contains(t.accountId) { out[calendar.startOfDay(for: t.date), default: 0] += t.amount }
+        return out
     }
     private var items: [ScheduleItem] { bills.filter(\.isActive).map(\.item) }
     private var days: [CalendarDay] {
-        CashCalendar.grid(month: month, schedules: items, balanceToday: startingBalance)
+        CashCalendar.grid(month: month, schedules: items, balanceToday: startingBalance, actualNetByDay: actualNetByDay)
     }
     private var summary: CalendarMonthSummary { CashCalendar.summary(of: days) }
 
