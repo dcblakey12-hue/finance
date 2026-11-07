@@ -3,6 +3,7 @@ import SwiftData
 
 struct SettingsView: View {
     @Query var profiles: [OFXProfile]
+    @Query(sort: \CategoryRule.merchantKey) var rules: [CategoryRule]
     @Environment(\.modelContext) private var context
 
     var body: some View {
@@ -27,6 +28,21 @@ struct SettingsView: View {
             Section("Categories") {
                 Text("Default envelope categories: \(BudgetService.defaultCategories.joined(separator: ", ")). Edit categories from the Transactions table.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Merchant rules") {
+                Text("When you pick a category for a transaction, Finance remembers it for that merchant and applies it to future imports.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if rules.isEmpty { Text("No rules learned yet.").font(.caption).foregroundStyle(.secondary) }
+                ForEach(rules) { r in
+                    HStack {
+                        Text(r.merchantKey).font(.body.monospaced())
+                        Spacer()
+                        Text(r.category).foregroundStyle(.secondary)
+                        Button("Forget", role: .destructive) {
+                            context.delete(r); try? context.save()
+                        }.font(.caption)
+                    }
+                }
             }
             Section("About") {
                 Text("Finance — native Mac app • SwiftUI + SwiftData + EventKit + Keychain. OFX 1.x/2.x parser built-in.")
