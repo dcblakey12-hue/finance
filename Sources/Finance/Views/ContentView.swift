@@ -34,8 +34,9 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             List(AppSection.allCases, selection: $selection) { s in
-                Label(s.rawValue, systemImage: s.icon).tag(s)
+                Label(s.rawValue, systemImage: s.icon)
                     .badge(s == .scheduled ? ScheduleService.overdue(schedules).count : 0)
+                    .tag(s)   // tag last, or the badge wrapper can swallow the sidebar selection
             }
             .navigationTitle("Finance")
         } detail: {
