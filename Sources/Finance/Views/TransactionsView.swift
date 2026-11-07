@@ -46,7 +46,7 @@ struct TransactionsView: View {
     var usedCategories: [String] { Array(Set(transactions.map { $0.category })).sorted() }
     /// Every category a transaction can be set to.
     var assignableCategories: [String] {
-        BudgetService.allCategories(custom: customCategories.map(\.name)) + ["Income", Categorizer.uncategorized]
+        BudgetService.allCategories(stored: customCategories.map(\.name)) + ["Income", Categorizer.uncategorized]
     }
 
     var body: some View {
@@ -137,14 +137,14 @@ struct TransactionsView: View {
         }
         .navigationTitle(accounts.first { $0.accountId == accountFilter }?.name ?? "Transactions")
         .sheet(item: $scheduleEditor) { ed in
-            ScheduleEditorSheet(editor: ed, categories: BudgetService.allCategories(custom: customCategories.map(\.name))) { draft in
+            ScheduleEditorSheet(editor: ed, categories: BudgetService.allCategories(stored: customCategories.map(\.name))) { draft in
                 ScheduleEditor.save(draft, existing: nil, in: context)
                 scheduleEditor = nil
                 status = "Scheduled \(draft.name) for the \(draft.dueDay)\(ordinalSuffix(draft.dueDay)) of each month. See Scheduled Transactions."
             } onCancel: { scheduleEditor = nil }
         }
         .sheet(item: $newCategoryFor) { tx in
-            NewCategorySheet(existing: BudgetService.allCategories(custom: customCategories.map(\.name))) { name in
+            NewCategorySheet(existing: BudgetService.allCategories(stored: customCategories.map(\.name))) { name in
                 newCategoryFor = nil
                 setCategory(name, on: tx)
             } onCancel: { newCategoryFor = nil }

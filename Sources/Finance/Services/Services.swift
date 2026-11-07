@@ -22,11 +22,12 @@ final class TransactionImportService {
         let existingRecords: [TransactionRecord] = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
         let existingFitIds = Set(existingRecords.map { "\($0.accountId)|\($0.fitid)" })
         let rules = CategorizationService.ruleMap(in: context)
+        let allowed = CategoryService.allowedBuiltIns(in: context)
         var inserted = 0, skipped = 0
         for t in parsed.transactions {
             let key = "\(acctId)|\(t.fitid)"
             if existingFitIds.contains(key) { skipped += 1; continue }
-            let category = Categorizer.category(forName: t.name, rules: rules) ?? Categorizer.uncategorized
+            let category = Categorizer.category(forName: t.name, rules: rules, allowed: allowed) ?? Categorizer.uncategorized
             let rec = TransactionRecord(fitid: t.fitid, accountId: acctId, accountName: account.name, date: t.date, name: t.name, amount: t.amount, type: t.type, category: category, memo: t.memo)
             context.insert(rec)
             inserted += 1
@@ -59,13 +60,14 @@ final class BudgetService {
         ["Housing", "Groceries", "Dining", "Transport", "Utilities", "Entertainment", "Health", "Savings", "Debt", "Other"]
     }
 
-    /// Default categories followed by the user's own, de-duplicated
-    /// case-insensitively (a custom "groceries" doesn't duplicate "Groceries").
-    static func allCategories(custom: [String]) -> [String] {
+    /// The user's categories, sorted by name and de-duplicated case-insensitively.
+    /// Stored in the `CustomCategory` table (seeded from `defaultCategories` on
+    /// first launch) so every category can be renamed or deleted.
+    static func allCategories(stored: [String]) -> [String] {
         var seen = Set<String>()
         var result: [String] = []
-        let customSorted = custom.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        for c in defaultCategories + customSorted {
+        let sorted = stored.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        for c in sorted {
             let trimmed = c.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, seen.insert(trimmed.lowercased()).inserted else { continue }
             result.append(trimmed)
@@ -78,6 +80,16 @@ final class BudgetService {
 
     /// Returns a cleaned name if it can be added, or nil if it's empty,
     /// reserved, or already exists (case-insensitive).
+    /// Returns a cleaned new name if renaming `old` to `raw` is allowed, or nil if
+    /// it's empty, unchanged, reserved, or taken by a *different* category
+    /// (case-insensitive). Changing only the capitalization is allowed.
+    static func validatedRename(_ raw: String, from old: String, existing: [String]) -> String? {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != old else { return nil }
+        let others = (existing.filter { $0.lowercased() != old.lowercased() } + reservedCategories).map { $0.lowercased() }
+        return others.contains(name.lowercased()) ? nil : name
+    }
+
     static func validatedNewCategory(_ raw: String, existing: [String]) -> String? {
         let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return nil }

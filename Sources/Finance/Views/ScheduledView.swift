@@ -11,7 +11,7 @@ struct ScheduledView: View {
     @State private var editor: ScheduleEditor?
     @State private var pendingDelete: RecurringBill?
 
-    private var categories: [String] { BudgetService.allCategories(custom: customCategories.map(\.name)) }
+    private var categories: [String] { BudgetService.allCategories(stored: customCategories.map(\.name)) }
     private var monthlyIncome: Double { schedules.filter { $0.isActive && $0.isIncome }.reduce(0) { $0 + abs($1.amount) } }
     private var monthlyBills: Double { schedules.filter { $0.isActive && $0.isExpense }.reduce(0) { $0 + abs($1.amount) } }
 

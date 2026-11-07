@@ -35,7 +35,7 @@ struct BudgetView: View {
                 }
                 Text("Tap an amount to edit. Spent updates automatically from transactions in that category.").font(.caption).foregroundStyle(.secondary)
 
-                ForEach(BudgetService.allCategories(custom: customCategories.map(\.name)), id: \.self) { cat in
+                ForEach(BudgetService.allCategories(stored: customCategories.map(\.name)), id: \.self) { cat in
                     let env = thisMonth.first { $0.category == cat }
                     let allocated = env?.allocated ?? 0
                     let spent = BudgetService.spent(for: cat, year: year, month: month, transactions: transactions)

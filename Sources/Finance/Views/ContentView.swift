@@ -25,6 +25,7 @@ let currency: NumberFormatter = {
 }()
 
 struct ContentView: View {
+    @Environment(\.modelContext) private var context
     @State private var selection: AppSection? = .dashboard
     /// OFX accountId shown in Transactions; nil = all accounts.
     @State private var transactionsAccount: String?
@@ -54,5 +55,6 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 600)
+        .task { CategoryService.seedIfNeeded(in: context) }
     }
 }
