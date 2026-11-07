@@ -7,7 +7,9 @@ user's private iCloud (SwiftData + CloudKit). No server.
 - Models have no unique constraints and every stored property has a default (CloudKit rules).
 - `DedupeService` merges duplicates a two-device sync can create (runs at launch).
 
-## Needs an Apple Developer account (paid)
+## Status: Mac target signed (team 8ZPXAYT3KA, bundle com.blakey.Finance, container iCloud.com.blakey.finance)
+
+## Needs an Apple Developer account (paid) — done for the Mac target
 1. Create an iCloud container, e.g. `iCloud.com.<you>.finance`.
 2. Mac target: sign with the team; add the iCloud capability (CloudKit) and Push Notifications
    (remote notifications background mode on iOS). In `project.yml` add the entitlements

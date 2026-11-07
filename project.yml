@@ -18,7 +18,7 @@ targets:
       - path: Sources/Finance
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.finance.Finance
+        PRODUCT_BUNDLE_IDENTIFIER: com.blakey.Finance
         GENERATE_INFOPLIST_FILE: "YES"
         INFOPLIST_KEY_CFBundleDisplayName: Finance
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.finance
@@ -29,7 +29,7 @@ targets:
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: 8ZPXAYT3KA
         ENABLE_APP_SANDBOX: "NO"
         ENABLE_HARDENED_RUNTIME: "YES"
         ENABLE_INCOMING_NETWORK_CONNECTIONS: "NO"
@@ -49,7 +49,7 @@ targets:
         NSMainStoryboardFile: ""
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.finance
-        FinanceCloudContainer: ""        # e.g. iCloud.com.you.finance; empty = no iCloud sync
+        FinanceCloudContainer: iCloud.com.blakey.finance   # empty = no iCloud sync
         ITSAppUsesNonExemptEncryption: false
         NSSupportsAutomaticGraphicsSwitching: true
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
@@ -59,6 +59,9 @@ targets:
         com.apple.security.app-sandbox: false
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.personal-information.calendars: true
+        com.apple.developer.aps-environment: development
+        com.apple.developer.icloud-services: [CloudKit]
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.blakey.finance]
         keychain-access-groups: []
 
   FinanceTests:
