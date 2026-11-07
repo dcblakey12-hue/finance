@@ -913,7 +913,8 @@ final class OverdueTests: XCTestCase {
 
     func testImportMarksMatchingOverduePaymentEntered() {
         let today = Date()
-        let due = cal.date(byAdding: .day, value: -3, to: cal.startOfDay(for: today))!
+        var due = cal.date(byAdding: .day, value: -3, to: cal.startOfDay(for: today))!
+        while cal.component(.day, from: due) > 28 { due = cal.date(byAdding: .day, value: -1, to: due)! }   // schedules cap at the 28th
         let bill = RecurringBill(name: "Electric", amount: 100, dueDay: cal.component(.day, from: due), category: "Utilities")
         bill.trackedSince = cal.date(byAdding: .day, value: -10, to: due)!
         context.insert(bill)
