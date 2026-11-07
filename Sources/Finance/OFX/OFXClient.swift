@@ -174,6 +174,7 @@ enum PlaidMapping {
     /// Plaid's first sync can include transactions already imported from OFX files. Pair each one with
     /// an existing, unclaimed record of the same amount within 2 days so it isn't added twice.
     /// Returns the Plaid transactions that are genuinely new and the existing records to re-tag.
+    @MainActor
     static func splitKnown(_ incoming: [OFXTransaction], existing: [TransactionRecord],
                            calendar: Calendar = .current) -> (new: [OFXTransaction], adopt: [(record: TransactionRecord, fitid: String)]) {
         var pool = existing.filter { !$0.fitid.hasPrefix(prefix) && !ManualTransactionService.isManual($0) }

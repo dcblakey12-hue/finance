@@ -1049,6 +1049,7 @@ final class PlaidMappingTests: XCTestCase {
         XCTAssertNil(PlaidMapping.convert(dto("t3", 5, "2026-11-05", pending: true), accountId: "chk", calendar: cal))
     }
 
+    @MainActor
     func testSplitKnownAdoptsExistingFileImports() {
         let d = cal.date(from: DateComponents(year: 2026, month: 11, day: 3, hour: 12))!
         let have = TransactionRecord(fitid: "OFX123", accountId: "chk", accountName: "Checking", date: d, name: "Cafe", amount: -12.5, type: .debit)
