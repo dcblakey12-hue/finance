@@ -32,6 +32,11 @@ struct CalendarView: View {
     private var days: [CalendarDay] {
         CashCalendar.grid(month: month, schedules: items, balanceToday: startingBalance, actualNetByDay: actualNetByDay)
     }
+    private var lowText: String {
+        guard let low = summary.low else { return "—" }
+        guard let d = summary.lowDate else { return money(low) }
+        return "\(money(low)) (\(d.formatted(.dateTime.month(.abbreviated).day())))"
+    }
     private var summary: CalendarMonthSummary { CashCalendar.summary(of: days) }
 
     private static let monthFormatter: DateFormatter = {
@@ -79,7 +84,7 @@ struct CalendarView: View {
             stat("Balance today", money(startingBalance), .primary)
             stat("Scheduled income", money(summary.income), .green)
             stat("Scheduled bills", money(summary.expenses), .primary)
-            stat("Lowest this month", summary.low.map(money) ?? "—", (summary.low ?? 0) < 0 ? .red : .primary)
+            stat("Lowest this month", lowText, (summary.low ?? 0) < 0 ? .red : .primary)
             stat("End of month", summary.closing.map(money) ?? "—", (summary.closing ?? 0) < 0 ? .red : .primary)
         }
         .overlay(alignment: .bottomLeading) {

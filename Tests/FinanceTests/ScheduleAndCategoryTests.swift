@@ -466,6 +466,7 @@ final class CashCalendarTests: XCTestCase {
         let s = CashCalendar.summary(of: days, today: d(2026, 11, 7), calendar: cal)
         XCTAssertEqual(s.income, 2000); XCTAssertEqual(s.expenses, 1200)
         XCTAssertEqual(s.low, 1800); XCTAssertEqual(s.closing, 3800)
+        XCTAssertEqual(s.lowDate, d(2026, 12, 1))
 
         let past = CashCalendar.grid(month: d(2026, 9, 1), schedules: [rent], balanceToday: 1000,
                                      today: d(2026, 11, 7), calendar: cal)

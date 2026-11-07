@@ -66,7 +66,8 @@ struct CalendarDay: Identifiable {
 struct CalendarMonthSummary: Equatable {
     var income: Double
     var expenses: Double
-    var low: Double?       // lowest end-of-day balance in the month (nil if the month is entirely in the past)
+    var low: Double?       // lowest end-of-day balance in the month
+    var lowDate: Date?     // the (first) day that low occurs
     var closing: Double?   // balance at the end of the month
 }
 
@@ -135,11 +136,11 @@ enum CashCalendar {
         let todayStart = calendar.startOfDay(for: today)
         let inMonth = days.filter(\.inMonth)
         let upcoming = inMonth.filter { $0.date >= todayStart }
-        let balances = inMonth.compactMap(\.closing)
+        let lowDay = inMonth.filter { $0.closing != nil }.min { ($0.closing ?? 0) < ($1.closing ?? 0) }
         return CalendarMonthSummary(
             income: upcoming.flatMap(\.events).filter { $0.amount > 0 }.reduce(0) { $0 + $1.amount },
             expenses: upcoming.flatMap(\.events).filter { $0.amount < 0 }.reduce(0) { $0 + abs($1.amount) },
-            low: balances.min(), closing: inMonth.last?.closing)
+            low: lowDay?.closing, lowDate: lowDay?.date, closing: inMonth.last?.closing)
     }
 }
 
