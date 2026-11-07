@@ -10,6 +10,7 @@ struct TransactionsTab: View {
     @Query private var customCategories: [CustomCategory]
     @Query(sort: \Account.name) private var accounts: [Account]
     @Environment(\.modelContext) private var context
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @State private var search = ""
     @State private var accountFilter: String?     // used only when not pushed from an account
@@ -25,6 +26,19 @@ struct TransactionsTab: View {
             return true
         }
     }
+    /// Phone on its side: there's room for a running balance down the right.
+    private var landscape: Bool { verticalSizeClass == .compact }
+    /// Transactions in the chosen account(s), ignoring search/category so balances stay right while filtering.
+    private var inScope: [TransactionRecord] {
+        effectiveAccount == nil ? transactions : transactions.filter { $0.accountId == effectiveAccount }
+    }
+    private var endingBalance: Double {
+        effectiveAccount == nil ? accounts.reduce(0) { $0 + $1.balance }
+                                : (accounts.first { $0.accountId == effectiveAccount }?.balance ?? 0)
+    }
+    private var runningBalances: [UUID: Double] {
+        landscape ? RunningBalance.compute(newestFirst: inScope.map { ($0.id, $0.amount) }, endingBalance: endingBalance) : [:]
+    }
     private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
 
     var body: some View {
@@ -33,23 +47,34 @@ struct TransactionsTab: View {
 
     private var content: some View {
         List {
+            let balances = runningBalances
             ForEach(rows.prefix(500)) { t in
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(t.name).lineLimit(1)
-                    if ManualTransactionService.isManual(t) {
-                        Text("manual").font(.caption2).foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(t.name).lineLimit(1)
+                        if ManualTransactionService.isManual(t) {
+                            Text("manual").font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(money(t.amount)).monospacedDigit().foregroundStyle(t.amount < 0 ? Color.primary : .green)
                     }
-                    Spacer()
-                    Text(money(t.amount)).monospacedDigit().foregroundStyle(t.amount < 0 ? Color.primary : .green)
+                    HStack {
+                        Text(t.date, format: .dateTime.month(.abbreviated).day().year())
+                        if accountId == nil { Text("• \(t.accountName)") }
+                        Spacer()
+                        categoryMenu(for: t)
+                    }
+                    .font(.caption).foregroundStyle(.secondary)
                 }
-                HStack {
-                    Text(t.date, format: .dateTime.month(.abbreviated).day().year())
-                    if accountId == nil { Text("• \(t.accountName)") }
-                    Spacer()
-                    categoryMenu(for: t)
+                if landscape, let bal = balances[t.id] {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(money(bal)).monospacedDigit().font(.callout.weight(.semibold))
+                            .foregroundStyle(bal < 0 ? .red : .primary)
+                        Text("balance").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .frame(width: 110, alignment: .trailing)
                 }
-                .font(.caption).foregroundStyle(.secondary)
             }
             }
             .onDelete { idx in
