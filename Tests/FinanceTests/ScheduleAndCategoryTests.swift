@@ -1032,3 +1032,38 @@ final class BackupServiceTests: XCTestCase {
         XCTAssertFalse(try ctx.fetch(FetchDescriptor<CustomCategory>()).isEmpty)   // standard categories re-seeded
     }
 }
+
+final class PlaidMappingTests: XCTestCase {
+    private var cal: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c }
+    private func dto(_ id: String, _ amt: Double, _ date: String, pending: Bool = false, merchant: String? = nil) -> PlaidTransactionDTO {
+        PlaidTransactionDTO(transaction_id: id, account_id: "pa", amount: amt, date: date, name: "RAW NAME", merchant_name: merchant, pending: pending)
+    }
+
+    func testPlaidSpendingBecomesNegativeAndPendingIsSkipped() {
+        let o = PlaidMapping.convert(dto("t1", 12.5, "2026-11-03", merchant: "Cafe"), accountId: "chk", calendar: cal)
+        XCTAssertEqual(o?.amount, -12.5)
+        XCTAssertEqual(o?.fitid, "plaid-t1")
+        XCTAssertEqual(o?.name, "Cafe")
+        XCTAssertEqual(o?.type, .debit)
+        XCTAssertEqual(PlaidMapping.convert(dto("t2", -2000, "2026-11-04"), accountId: "chk", calendar: cal)?.amount, 2000)   // deposit
+        XCTAssertNil(PlaidMapping.convert(dto("t3", 5, "2026-11-05", pending: true), accountId: "chk", calendar: cal))
+    }
+
+    func testSplitKnownAdoptsExistingFileImports() {
+        let d = cal.date(from: DateComponents(year: 2026, month: 11, day: 3, hour: 12))!
+        let have = TransactionRecord(fitid: "OFX123", accountId: "chk", accountName: "Checking", date: d, name: "Cafe", amount: -12.5, type: .debit)
+        let incoming = [PlaidMapping.convert(dto("t1", 12.5, "2026-11-04"), accountId: "chk", calendar: cal)!,
+                        PlaidMapping.convert(dto("t9", 40, "2026-11-04"), accountId: "chk", calendar: cal)!]
+        let split = PlaidMapping.splitKnown(incoming, existing: [have], calendar: cal)
+        XCTAssertEqual(split.new.map(\.fitid), ["plaid-t9"])
+        XCTAssertEqual(split.adopt.map(\.fitid), ["plaid-t1"])
+        XCTAssertTrue(split.adopt.first?.record === have)
+    }
+
+    func testCardBalanceIsStoredAsWhatYouOwe() {
+        let card = PlaidAccountInfo(accountId: "c", name: "Visa", mask: "1234", type: "credit", subtype: "credit card", current: 250)
+        XCTAssertEqual(card.appBalance, -250)
+        XCTAssertEqual(card.appType, .creditCard)
+        XCTAssertEqual(PlaidAccountInfo(accountId: "s", name: "Sv", mask: nil, type: "depository", subtype: "savings", current: 900).appType, .savings)
+    }
+}
