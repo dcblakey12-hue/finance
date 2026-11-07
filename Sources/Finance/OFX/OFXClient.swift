@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import SwiftData
 
 /// Direct OFX server client (OFXHome). Many banks no longer support this;
 /// file import is the reliable path. This client exists so both modes work
