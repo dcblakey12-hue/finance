@@ -350,3 +350,74 @@ final class AccountGroupingTests: XCTestCase {
         XCTAssertTrue(AccountType.grouped([(String, AccountType)](), by: { $0.1 }).isEmpty)
     }
 }
+
+final class TransferCandidatesTests: XCTestCase {
+    private var cal: Calendar = {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c
+    }()
+    private func d(_ day: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: 11, day: day))! }
+    private func c(_ acct: String, _ amt: Double, _ day: Int) -> TransferDetector.Candidate {
+        .init(id: UUID(), accountId: acct, amount: amt, date: d(day))
+    }
+
+    func testRanksByAmountThenDateAndFiltersOthers() {
+        let src = c("checking", -500, 10)
+        let exact = c("card", 500, 14), withFee = c("card", 495, 11), sameSign = c("card", -500, 10)
+        let sameAccount = c("checking", 500, 10), tooFar = c("card", 500, 25)
+        let r = TransferDetector.candidates(for: src, among: [withFee, exact, sameSign, sameAccount, tooFar], calendar: cal)
+        XCTAssertEqual(r, [exact.id, withFee.id])
+    }
+}
+
+@MainActor
+final class TransferLinkTests: XCTestCase {
+    private var container: ModelContainer!
+    private var context: ModelContext!
+
+    override func setUp() async throws {
+        let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+        container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        context = ModelContext(container)
+    }
+
+    private func tx(_ acct: String, _ amount: Double, _ category: String = "Uncategorized", daysAgo: Int = 1) -> TransactionRecord {
+        let date = Calendar.current.date(byAdding: .day, value: -daysAgo, to: Date())!
+        let t = TransactionRecord(fitid: UUID().uuidString, accountId: acct, accountName: acct.capitalized, date: date,
+                                  name: "x", amount: amount, type: amount < 0 ? .debit : .credit, category: category)
+        context.insert(t); return t
+    }
+
+    func testFindTransfersLinksBothSides() {
+        let out = tx("checking", -500), inn = tx("card", 500, daysAgo: 0), lunch = tx("checking", -12)
+        let scan = CategorizationService.markTransfers(in: context)
+        XCTAssertEqual(scan.linked, 1)
+        XCTAssertEqual(out.transferPeerId, inn.id)
+        XCTAssertEqual(inn.transferPeerId, out.id)
+        XCTAssertEqual(out.category, "Transfer"); XCTAssertEqual(inn.category, "Transfer")
+        XCTAssertNil(lunch.transferPeerId)
+        // Running it again finds nothing new.
+        XCTAssertEqual(CategorizationService.markTransfers(in: context).linked, 0)
+    }
+
+    func testManualLinkReplacesOldLinkAndUnlinkResetsBoth() {
+        let out = tx("checking", -500), card = tx("card", 495), other = tx("savings", 500)
+        TransferLinkService.link(out, card, in: context)
+        XCTAssertEqual(card.transferPeerId, out.id)
+
+        TransferLinkService.link(out, other, in: context)          // relink out -> savings
+        XCTAssertEqual(out.transferPeerId, other.id)
+        XCTAssertEqual(other.transferPeerId, out.id)
+        XCTAssertNil(card.transferPeerId)                          // old partner released
+
+        TransferLinkService.unlink(out, in: context)
+        XCTAssertNil(out.transferPeerId); XCTAssertNil(other.transferPeerId)
+        XCTAssertEqual(out.category, "Uncategorized"); XCTAssertEqual(other.category, "Uncategorized")
+    }
+
+    func testLinkRefusesSameAccount() {
+        let a = tx("checking", -50), b = tx("checking", 50)
+        TransferLinkService.link(a, b, in: context)
+        XCTAssertNil(a.transferPeerId)
+    }
+}

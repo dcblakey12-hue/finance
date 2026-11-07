@@ -16,6 +16,8 @@ struct TransactionsView: View {
     @State private var scheduleEditor: ScheduleEditor?
     /// Transaction waiting for a newly created category.
     @State private var newCategoryFor: TransactionRecord?
+    /// Transaction we're choosing a transfer partner for.
+    @State private var linkingTx: TransactionRecord?
 
     var filtered: [TransactionRecord] {
         transactions.filter { t in
@@ -73,8 +75,8 @@ struct TransactionsView: View {
                 .help("Apply learned merchant rules and built-in keywords to uncategorized transactions")
                 Button("Find Transfers") {
                     let r = CategorizationService.markTransfers(in: context)
-                    if r.marked > 0 {
-                        status = "Marked \(r.marked) transaction\(r.marked == 1 ? "" : "s") as transfers between your accounts."
+                    if r.linked > 0 {
+                        status = "Linked \(r.linked) transfer\(r.linked == 1 ? "" : "s") between your accounts."
                     } else if r.lookalikes > 0 {
                         status = "No new transfers. \(r.lookalikes) equal-and-opposite pair\(r.lookalikes == 1 ? "" : "s") already have a category or are more than 5 days apart. Set one side to Transfer yourself and the app will remember that merchant."
                     } else {
@@ -98,6 +100,7 @@ struct TransactionsView: View {
                     .padding(.horizontal).padding(.bottom, 6)
             }
             let runningBalances = balances
+            let byId = Dictionary(uniqueKeysWithValues: transactions.map { ($0.id, $0) })
             List(filtered) { tx in
                 HStack {
                     Text(tx.date, format: .dateTime.month(.abbreviated).day().year())
@@ -105,7 +108,7 @@ struct TransactionsView: View {
                         .frame(width: 100, alignment: .leading)
                     VStack(alignment: .leading) {
                         Text(tx.name).font(.headline)
-                        Text(tx.accountName).font(.caption).foregroundStyle(.secondary)
+                        Text(accountLine(tx, byId)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Picker("Category", selection: Binding(
@@ -137,6 +140,18 @@ struct TransactionsView: View {
                     Button("Schedule as Recurring…") {
                         scheduleEditor = ScheduleEditor(existing: nil, draft: ScheduleService.draft(
                             fromName: tx.name, amount: tx.amount, date: tx.date, category: tx.category))
+                    }
+                    Divider()
+                    if let pid = tx.transferPeerId {
+                        if let peer = byId[pid] {
+                            Button("Show Other Side of Transfer") { showOtherSide(peer) }
+                        }
+                        Button("Unlink Transfer") {
+                            TransferLinkService.unlink(tx, in: context)
+                            status = "Unlinked. Both sides are Uncategorized again."
+                        }
+                    } else {
+                        Button("Link to Matching Transaction…") { linkingTx = tx }
                     }
                 }
             }
@@ -175,6 +190,13 @@ struct TransactionsView: View {
                 status = "Scheduled \(draft.name) for the \(draft.dueDay)\(ordinalSuffix(draft.dueDay)) of each month. See Scheduled Transactions."
             } onCancel: { scheduleEditor = nil }
         }
+        .sheet(item: $linkingTx) { tx in
+            TransferLinkSheet(source: tx, candidates: linkCandidates(for: tx)) { other in
+                TransferLinkService.link(tx, other, in: context)
+                linkingTx = nil
+                status = "Linked to \(other.accountName) as a transfer."
+            } onCancel: { linkingTx = nil }
+        }
         .sheet(item: $newCategoryFor) { tx in
             NewCategorySheet(existing: BudgetService.allCategories(stored: customCategories.map(\.name))) { name in
                 newCategoryFor = nil
@@ -194,8 +216,33 @@ struct TransactionsView: View {
     }()
     private static func monthLabel(_ d: Date) -> String { monthFormatter.string(from: d) }
 
+    private func accountLine(_ tx: TransactionRecord, _ byId: [UUID: TransactionRecord]) -> String {
+        guard let pid = tx.transferPeerId, let peer = byId[pid] else { return tx.accountName }
+        return tx.amount < 0 ? "\(tx.accountName) — Transfer → \(peer.accountName)"
+                             : "\(tx.accountName) — Transfer ← \(peer.accountName)"
+    }
+
+    private func showOtherSide(_ peer: TransactionRecord) {
+        filters = TransactionFilters(accountId: peer.accountId, month: peer.date)
+        search = peer.name
+        status = "Showing the other side of the transfer in \(peer.accountName)."
+    }
+
+    private func linkCandidates(for tx: TransactionRecord) -> [TransactionRecord] {
+        func cand(_ t: TransactionRecord) -> TransferDetector.Candidate {
+            .init(id: t.id, accountId: t.accountId, amount: t.amount, date: t.date)
+        }
+        let pool = transactions.filter { $0.transferPeerId == nil }
+        let byId = Dictionary(uniqueKeysWithValues: pool.map { ($0.id, $0) })
+        return TransferDetector.candidates(for: cand(tx), among: pool.map(cand)).compactMap { byId[$0] }
+    }
+
     private func setCategory(_ newCat: String, on tx: TransactionRecord) {
         guard newCat != tx.category else { return }
+        // Moving a linked transfer to another category breaks the link (the other side keeps Transfer).
+        if tx.transferPeerId != nil && newCat != Categorizer.transfer {
+            TransferLinkService.detach(tx, among: transactions)
+        }
         let n = CategorizationService.learn(from: tx, category: newCat, in: context)
         guard newCat != Categorizer.uncategorized else { return }
         let merchant = MerchantNormalizer.key(for: tx.name)
@@ -207,5 +254,61 @@ struct TransactionsView: View {
     private func ordinalSuffix(_ n: Int) -> String {
         if (11...13).contains(n % 100) { return "th" }
         switch n % 10 { case 1: return "st"; case 2: return "nd"; case 3: return "rd"; default: return "th" }
+    }
+}
+
+// MARK: - Manual transfer linking
+
+struct TransferLinkSheet: View {
+    let source: TransactionRecord
+    let candidates: [TransactionRecord]
+    let onLink: (TransactionRecord) -> Void
+    let onCancel: () -> Void
+
+    @State private var selection: UUID?
+
+    private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Link transfer").font(.headline)
+            Text("\(source.name) • \(money(source.amount)) • \(source.date.formatted(date: .abbreviated, time: .omitted)) • \(source.accountName)")
+                .font(.callout).foregroundStyle(.secondary)
+            if candidates.isEmpty {
+                Text("No unlinked transactions in other accounts with the opposite sign within 10 days.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Pick the other side. Closest amounts and dates are first. Double-click to link.")
+                    .font(.caption).foregroundStyle(.secondary)
+                List(candidates, selection: $selection) { c in
+                    HStack {
+                        Text(c.date, format: .dateTime.month(.abbreviated).day().year()).frame(width: 100, alignment: .leading)
+                        VStack(alignment: .leading) {
+                            Text(c.name)
+                            Text(c.accountName).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(money(c.amount)).monospacedDigit()
+                    }
+                    .tag(c.id)
+                }
+                .frame(height: 260)
+                .contextMenu(forSelectionType: UUID.self) { _ in } primaryAction: { ids in
+                    if let c = candidates.first(where: { ids.contains($0.id) }) { onLink(c) }
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                Button("Link") {
+                    if let c = candidates.first(where: { $0.id == selection }) { onLink(c) }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(selection == nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 540)
     }
 }

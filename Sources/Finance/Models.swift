@@ -52,6 +52,9 @@ final class TransactionRecord {
     var typeRaw: String
     var category: String
     var memo: String
+    /// The other side of a transfer between two of your accounts (e.g. the card payment
+    /// that matches a bank debit). Nil when not linked.
+    var transferPeerId: UUID? = nil
 
     init(id: UUID = UUID(), fitid: String, accountId: String, accountName: String, date: Date, name: String, amount: Double, type: TransactionType, category: String = "Uncategorized", memo: String = "") {
         self.id = id; self.fitid = fitid; self.accountId = accountId; self.accountName = accountName

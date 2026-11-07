@@ -298,7 +298,26 @@ enum TransferDetector {
     }
 }
 
+extension TransferDetector {
+    /// Possible other sides for `tx`, best first: different account, opposite sign,
+    /// within `maxDays`, ranked by how close the amounts and dates are. Used for manual linking.
+    static func candidates(for tx: Candidate, among others: [Candidate], maxDays: Int = 10, limit: Int = 15,
+                           calendar: Calendar = .current) -> [UUID] {
+        let source = calendar.startOfDay(for: tx.date)
+        let ranked: [(id: UUID, amountGap: Double, dayGap: Int)] = others.compactMap { o in
+            guard o.id != tx.id, o.accountId != tx.accountId, (o.amount > 0) != (tx.amount > 0), o.amount != 0 else { return nil }
+            let days = abs(calendar.dateComponents([.day], from: source, to: calendar.startOfDay(for: o.date)).day ?? Int.max)
+            guard days <= maxDays else { return nil }
+            return (o.id, abs(abs(o.amount) - abs(tx.amount)), days)
+        }
+        return ranked
+            .sorted { ($0.amountGap, $0.dayGap) < ($1.amountGap, $1.dayGap) }
+            .prefix(limit).map(\.id)
+    }
+}
+
 struct TransferScan {
+    var linked = 0       // transfers linked (pairs)
     var marked = 0       // transactions newly marked as Transfer
     var checked = 0      // uncategorized transactions looked at
     var lookalikes = 0   // equal-and-opposite pairs skipped (already categorized, or 6-10 days apart)
@@ -306,30 +325,69 @@ struct TransferScan {
 
 @MainActor
 extension CategorizationService {
-    /// Mark matching opposite transactions across accounts as Transfers.
-    /// Only looks at Uncategorized and already-Transfer transactions, so categories
-    /// you chose yourself are never overwritten.
+    /// Find matching opposite transactions across accounts, mark both as Transfer and
+    /// link them to each other. Only looks at unlinked Uncategorized/Transfer transactions,
+    /// so categories you chose yourself are never overwritten.
     @discardableResult
     static func markTransfers(in context: ModelContext) -> TransferScan {
         let all = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
         func candidate(_ t: TransactionRecord) -> TransferDetector.Candidate {
             .init(id: t.id, accountId: t.accountId, amount: t.amount, date: t.date)
         }
-        let pool = all.filter { $0.category == Categorizer.uncategorized || $0.category == Categorizer.transfer }
+        let unlinked = all.filter { $0.transferPeerId == nil }
+        let pool = unlinked.filter { $0.category == Categorizer.uncategorized || $0.category == Categorizer.transfer }
         let byId = Dictionary(uniqueKeysWithValues: pool.map { ($0.id, $0) })
         let pairs = TransferDetector.pairs(pool.map(candidate))
         var scan = TransferScan(checked: pool.count)
         for (a, b) in pairs {
-            for id in [a, b] {
-                if let tx = byId[id], tx.category != Categorizer.transfer {
-                    tx.category = Categorizer.transfer; scan.marked += 1
-                }
+            guard let ta = byId[a], let tb = byId[b] else { continue }
+            for tx in [ta, tb] where tx.category != Categorizer.transfer {
+                tx.category = Categorizer.transfer; scan.marked += 1
             }
+            ta.transferPeerId = tb.id; tb.transferPeerId = ta.id
+            scan.linked += 1
         }
-        // How many lookalikes did we skip? Compare against a looser search over everything.
-        let loose = TransferDetector.pairs(all.map(candidate), maxDays: 10).count
+        // How many lookalikes did we skip? Compare against a looser search over everything unlinked.
+        let loose = TransferDetector.pairs(unlinked.map(candidate), maxDays: 10).count
         scan.lookalikes = max(0, loose - pairs.count)
         try? context.save()
         return scan
+    }
+}
+
+// MARK: - Linking the two sides of a transfer
+
+@MainActor
+enum TransferLinkService {
+    static func peer(of tx: TransactionRecord, in all: [TransactionRecord]) -> TransactionRecord? {
+        guard let id = tx.transferPeerId else { return nil }
+        return all.first { $0.id == id }
+    }
+
+    /// Remove `tx`'s link (and the matching link on its peer) without touching categories.
+    static func detach(_ tx: TransactionRecord, among all: [TransactionRecord]) {
+        peer(of: tx, in: all)?.transferPeerId = nil
+        tx.transferPeerId = nil
+    }
+
+    /// Link two transactions in different accounts as the two sides of one transfer
+    /// and mark both as Transfer. Any previous links either one had are removed first.
+    static func link(_ a: TransactionRecord, _ b: TransactionRecord, in context: ModelContext) {
+        guard a.id != b.id, a.accountId != b.accountId else { return }
+        let all = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
+        detach(a, among: all); detach(b, among: all)
+        a.transferPeerId = b.id; b.transferPeerId = a.id
+        a.category = Categorizer.transfer; b.category = Categorizer.transfer
+        try? context.save()
+    }
+
+    /// Unlink a transfer: both sides go back to being normal, uncategorized transactions.
+    static func unlink(_ tx: TransactionRecord, in context: ModelContext) {
+        let all = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
+        let other = peer(of: tx, in: all)
+        detach(tx, among: all)
+        tx.category = Categorizer.uncategorized
+        other?.category = Categorizer.uncategorized
+        try? context.save()
     }
 }

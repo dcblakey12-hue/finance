@@ -90,6 +90,11 @@ struct AccountsView: View {
 
     private func delete(_ a: Account) {
         let acctId = a.accountId
+        // Transfers linked to this account's transactions lose their link on the other side.
+        let doomed = Set(transactions.filter { $0.accountId == acctId }.map(\.id))
+        for tx in transactions where tx.accountId != acctId {
+            if let p = tx.transferPeerId, doomed.contains(p) { tx.transferPeerId = nil }
+        }
         for tx in transactions where tx.accountId == acctId { context.delete(tx) }
         selection.remove(a.id)
         context.delete(a)
