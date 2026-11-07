@@ -150,7 +150,9 @@ enum RunningBalance {
 final class CalendarService {
     var access: EKAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
     private let store = EKEventStore()
-    static let calendarTitle = "Finance Bills"
+    static let defaultCalendarName = "Finance Bills"
+    /// Title of the Mac calendar the app writes to (user-chosen; created if missing).
+    var calendarName = CalendarService.defaultCalendarName
     static let marker = "Synced by Finance app"
     var isAuthorized: Bool { access == .fullAccess }
 
@@ -163,10 +165,10 @@ final class CalendarService {
 
     /// The "Finance Bills" calendar: reused if it exists (by title), otherwise created.
     func ensureFinanceCalendar() -> EKCalendar? {
-        if let existing = store.calendars(for: .event).first(where: { $0.title == Self.calendarTitle }) { return existing }
+        if let existing = store.calendars(for: .event).first(where: { $0.title == calendarName }) { return existing }
         guard let defaultCal = store.defaultCalendarForNewEvents ?? store.calendars(for: .event).first else { return nil }
         let cal = EKCalendar(for: .event, eventStore: store)
-        cal.title = Self.calendarTitle
+        cal.title = calendarName
         cal.source = defaultCal.source
         do { try store.saveCalendar(cal, commit: true); return cal } catch { return nil }
     }
@@ -174,7 +176,7 @@ final class CalendarService {
     /// Remove events this app created (from a month ago to five years out). Returns how many.
     @discardableResult
     func clearSynced() throws -> Int {
-        guard let cal = store.calendars(for: .event).first(where: { $0.title == Self.calendarTitle }) else { return 0 }
+        guard let cal = store.calendars(for: .event).first(where: { $0.title == calendarName }) else { return 0 }
         let start = Calendar.current.date(byAdding: .month, value: -1, to: Date())!
         let end = Calendar.current.date(byAdding: .year, value: 5, to: Date())!
         let mine = store.events(matching: store.predicateForEvents(withStart: start, end: end, calendars: [cal]))

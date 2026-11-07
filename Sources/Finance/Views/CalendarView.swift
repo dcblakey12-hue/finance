@@ -12,6 +12,7 @@ struct CalendarView: View {
     @State private var selected: Date?
     @State private var includeAllAccounts = false
     @State private var status = ""
+    @AppStorage("macCalendarName") private var calendarName = CalendarService.defaultCalendarName
 
     private var calendar: Calendar { .current }
 
@@ -182,8 +183,15 @@ struct CalendarView: View {
     private var macCalendarBox: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Mac Calendar").font(.headline)
-            Text("Copy your scheduled bills and paydays into a \"Finance Bills\" calendar in the Calendar app (next 12 months). Re-running replaces what the app added before, so nothing is duplicated.")
+            Text("Copy your scheduled bills and paydays into a calendar in the Calendar app (next 12 months). The calendar is created if it doesn't exist, and re-running replaces what the app added before, so nothing is duplicated.")
                 .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text("Calendar name")
+                TextField(CalendarService.defaultCalendarName, text: $calendarName)
+                    .textFieldStyle(.roundedBorder).frame(width: 220)
+            }
+            Text("If you change the name later, use Remove first to clear the old calendar's events.")
+                .font(.caption2).foregroundStyle(.secondary)
             HStack {
                 if calService.isAuthorized {
                     Button("Add to Mac Calendar") { sync() }.buttonStyle(.borderedProminent)
@@ -220,12 +228,18 @@ struct CalendarView: View {
     private func shift(_ delta: Int) {
         month = calendar.date(byAdding: .month, value: delta, to: month) ?? month
     }
+    private func applyName() {
+        let name = calendarName.trimmingCharacters(in: .whitespaces)
+        calService.calendarName = name.isEmpty ? CalendarService.defaultCalendarName : name
+    }
     private func sync() {
-        do { let n = try calService.syncBills(bills); status = "Added \(n) events to the Finance Bills calendar." }
+        applyName()
+        do { let n = try calService.syncBills(bills); status = "Added \(n) events to the \(calService.calendarName) calendar." }
         catch { status = "Calendar sync failed: \(error.localizedDescription)" }
     }
     private func clear() {
-        do { let n = try calService.clearSynced(); status = "Removed \(n) events from the Finance Bills calendar." }
+        applyName()
+        do { let n = try calService.clearSynced(); status = "Removed \(n) events from the \(calService.calendarName) calendar." }
         catch { status = "Couldn't remove events: \(error.localizedDescription)" }
     }
 }
