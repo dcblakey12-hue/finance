@@ -3,7 +3,7 @@ import Foundation
 /// Month-by-month cash-flow projection from current balances, scheduled
 /// transactions, and envelope allocations.
 ///
-/// Rules (v1, monthly schedules only):
+/// Rules (v1):
 /// - Starting balance is supplied by the caller (defaults to net worth in UI).
 /// - Every active RecurringBill contributes once per month on its `dueDay`.
 ///   Income (`kindRaw == "credit"`) is +, expenses are −.
@@ -31,7 +31,17 @@ enum CashFlowForecastService: Sendable {
         // this function pure and testable without SwiftData concurrency noise.
         // Transfers between your own accounts don't change net worth, so the forecast ignores them.
         let active = bills.filter { $0.isActive && !$0.isTransfer }
-        let rules: [ScheduleRule?] = active.map { $0.rule }
+        // Payments already entered in the past still count when you start the forecast before them
+        // (the starting balance is wound back to that date); skipped ones never happened.
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        let rules: [ScheduleRule?] = active.map { b in
+            var r = b.rule
+            r.excluded = Set(b.occurrenceLog.compactMap { key, status -> Date? in
+                guard let d = OccurrenceLog.date(fromKey: key) else { return nil }
+                return (status == .skipped || d >= todayStart) ? d : nil
+            })
+            return r
+        }
         let plainBills = active.map { (name: $0.name, amount: abs($0.amount), dueDay: $0.dueDay, category: $0.category, isIncome: $0.isIncome) }
         let plainEnvelopes = envelopes.map { (category: $0.category, year: $0.year, month: $0.month, allocated: max(0, $0.allocated)) }
         let plainTx = transactions.filter { $0.category != Categorizer.transfer }.map { (date: $0.date, amount: $0.amount) }

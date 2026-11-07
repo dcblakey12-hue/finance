@@ -13,8 +13,15 @@ struct ForecastView: View {
     @State private var fallbackAverage = true
     @State private var inferIncome = true
     @State private var selectedMonthID: Date?
+    @State private var startDate = Calendar.current.startOfDay(for: Date())
 
-    var startingBalance: Double { accounts.reduce(0) { $0 + $1.balance } }
+    /// Balance at the start of `startDate`: today's total, wound back by everything posted since.
+    var startingBalance: Double {
+        let now = accounts.reduce(0) { $0 + $1.balance }
+        let start = Calendar.current.startOfDay(for: startDate)
+        guard start < Calendar.current.startOfDay(for: Date()) else { return now }
+        return now - transactions.filter { $0.date >= start }.reduce(0) { $0 + $1.amount }
+    }
 
     var forecast: [ForecastMonth] {
         CashFlowForecastService.forecast(
@@ -22,7 +29,7 @@ struct ForecastView: View {
             options: ForecastOptions(
                 months: monthsToShow, includeEnvelopes: includeEnvelopes,
                 fallbackAverageVariable: fallbackAverage, inferIncomeFromHistory: inferIncome,
-                startingBalance: startingBalance
+                startingBalance: startingBalance, from: startDate
             )
         )
     }
@@ -55,8 +62,10 @@ struct ForecastView: View {
     private var controls: some View {
         HStack(spacing: 16) {
             Picker("Horizon", selection: $monthsToShow) {
-                Text("6 months").tag(6); Text("12 months").tag(12); Text("24 months").tag(24)
-            }.pickerStyle(.segmented).frame(width: 260)
+                Text("3 months").tag(3); Text("6 months").tag(6); Text("12 months").tag(12); Text("24 months").tag(24)
+            }.pickerStyle(.segmented).frame(width: 330)
+            DatePicker("Start", selection: $startDate, in: ...Date(), displayedComponents: .date).font(.caption)
+            Button("Today") { startDate = Calendar.current.startOfDay(for: Date()) }.font(.caption).disabled(Calendar.current.isDateInToday(startDate))
             Toggle("Include envelopes", isOn: $includeEnvelopes).font(.caption)
             Toggle("Fallback avg", isOn: $fallbackAverage).font(.caption)
             Toggle("Estimate income", isOn: $inferIncome).font(.caption)
@@ -67,7 +76,7 @@ struct ForecastView: View {
     private var kpis: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 16) {
-                KpiCard(title: "Starting balance", value: fmt(startingBalance), icon: "wallet.bifold")
+                KpiCard(title: Calendar.current.isDateInToday(startDate) ? "Starting balance" : "Balance on \(startDate.formatted(.dateTime.month(.abbreviated).day()))", value: fmt(startingBalance), icon: "wallet.bifold")
                 KpiCard(title: "Projected low", value: fmt(projectedMin), icon: projectedMin < 0 ? "exclamationmark.triangle" : "arrow.down.circle")
                 KpiCard(title: "Ending (\(monthsToShow)m)", value: fmt(projectedEnd), icon: "flag.checkered")
                 KpiCard(title: "Net change", value: fmt(projectedEnd - startingBalance), icon: "arrow.triangle.2.circlepath")
@@ -150,7 +159,7 @@ struct ForecastView: View {
     private var assumptions: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("How this is calculated").font(.caption.bold())
-            Text("• Starting balance = sum of all accounts. Current month counts only events still ahead; envelope spend is pro-rated by remaining days.")
+            Text("• Starting balance = sum of all accounts (for an earlier start date, wound back by what posted since, so paydays after it count again). Current month counts only events still ahead; envelope spend is pro-rated by remaining days.")
             Text("• Bills in an envelope category reduce that envelope (Rent $1,200 in Housing $1,500 → $300 variable), avoiding double count.")
             Text("• Future months reuse the most recent envelope month; with no envelopes, a trailing 3-month average is used (if enabled).")
             Text("• Estimated income is only used when you have no paycheck scheduled (if enabled).")
