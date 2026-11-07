@@ -3,6 +3,7 @@ import SwiftData
 
 struct CalendarView: View {
     @Query(sort: \RecurringBill.dueDay) var bills: [RecurringBill]
+    @Query var customCategories: [CustomCategory]
     @State private var calService = CalendarService()
     @State private var newName = ""
     @State private var newAmount = ""
@@ -47,7 +48,7 @@ struct CalendarView: View {
                     TextField("Amount", text: $newAmount)
                     TextField(newIsIncome ? "Payday (day 1-28)" : "Due day (1-28)", text: $newDay)
                     if !newIsIncome {
-                        Picker("Category", selection: $newCategory) { ForEach(BudgetService.defaultCategories, id: \.self) { Text($0).tag($0) } }
+                        Picker("Category", selection: $newCategory) { ForEach(BudgetService.allCategories(custom: customCategories.map(\.name)), id: \.self) { Text($0).tag($0) } }
                     }
                     Button(newIsIncome ? "Add Income Schedule" : "Add Recurring Bill") { addSchedule() }
                         .buttonStyle(.borderedProminent).disabled(newName.isEmpty || newAmount.isEmpty)

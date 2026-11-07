@@ -3,7 +3,7 @@ import SwiftData
 
 enum AppSection: String, CaseIterable, Identifiable {
     case dashboard = "Dashboard", accounts = "Accounts", transactions = "Transactions",
-         budget = "Budget", calendar = "Bills & Calendar", forecast = "Cash Flow Forecast", importData = "Import & Sync", settings = "Settings"
+         budget = "Budget", scheduled = "Scheduled Transactions", calendar = "Bills & Calendar", forecast = "Cash Flow Forecast", importData = "Import & Sync", settings = "Settings"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -11,6 +11,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .accounts: return "building.columns"
         case .transactions: return "list.bullet"
         case .budget: return "envelope"
+        case .scheduled: return "calendar.badge.clock"
         case .calendar: return "calendar"
         case .forecast: return "chart.line.uptrend.xyaxis"
         case .importData: return "square.and.arrow.down.on.square"
@@ -44,6 +45,7 @@ struct ContentView: View {
                     })
                 case .transactions: TransactionsView(accountFilter: $transactionsAccount)
                 case .budget: BudgetView()
+                case .scheduled: ScheduledView()
                 case .calendar: CalendarView()
                 case .forecast: ForecastView()
                 case .importData: ImportView()

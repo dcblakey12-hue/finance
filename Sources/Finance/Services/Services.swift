@@ -58,6 +58,32 @@ final class BudgetService {
     static var defaultCategories: [String] {
         ["Housing", "Groceries", "Dining", "Transport", "Utilities", "Entertainment", "Health", "Savings", "Debt", "Other"]
     }
+
+    /// Default categories followed by the user's own, de-duplicated
+    /// case-insensitively (a custom "groceries" doesn't duplicate "Groceries").
+    static func allCategories(custom: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        let customSorted = custom.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        for c in defaultCategories + customSorted {
+            let trimmed = c.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed.lowercased()).inserted else { continue }
+            result.append(trimmed)
+        }
+        return result
+    }
+
+    /// Names that can't be added as custom categories because the app uses them itself.
+    static let reservedCategories = ["Income", "Uncategorized"]
+
+    /// Returns a cleaned name if it can be added, or nil if it's empty,
+    /// reserved, or already exists (case-insensitive).
+    static func validatedNewCategory(_ raw: String, existing: [String]) -> String? {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+        let taken = Set((existing + reservedCategories).map { $0.lowercased() })
+        return taken.contains(name.lowercased()) ? nil : name
+    }
 }
 
 // MARK: - Calendar (Bills + EventKit)

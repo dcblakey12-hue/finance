@@ -180,3 +180,16 @@ struct ForecastOptions {
         self.startingBalance = startingBalance; self.from = from
     }
 }
+
+// MARK: - User-defined categories
+
+/// A category the user added on top of `BudgetService.defaultCategories`.
+@Model
+final class CustomCategory {
+    @Attribute(.unique) var name: String
+    var createdAt: Date
+
+    init(name: String, createdAt: Date = Date()) {
+        self.name = name; self.createdAt = createdAt
+    }
+}
