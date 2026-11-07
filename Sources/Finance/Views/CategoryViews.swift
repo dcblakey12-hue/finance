@@ -58,7 +58,7 @@ struct CategoriesSettingsSection: View {
 
     var body: some View {
         Section {
-            Text("Rename or delete any category. Renaming updates its transactions, budget, scheduled items and merchant rules. “Income” and “Uncategorized” are built into the app and can't be changed.")
+            Text("Rename or delete any category. Renaming updates its transactions, budget, scheduled items and merchant rules. “Income”, “Transfer” and “Uncategorized” are built into the app and can't be changed.")
                 .font(.caption).foregroundStyle(.secondary)
             if categories.isEmpty { Text("No categories yet.").font(.caption).foregroundStyle(.secondary) }
             ForEach(categories) { c in

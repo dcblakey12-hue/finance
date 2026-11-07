@@ -36,6 +36,7 @@ struct DashboardView: View {
                 }
 
                 Text("Spending by category — \(period.rawValue)").font(.headline)
+                Text("Transfers between your accounts (category “Transfer”) are not counted.").font(.caption).foregroundStyle(.secondary)
                 if categorySpend.isEmpty {
                     Text("No spending in this period.").foregroundStyle(.secondary)
                 } else {

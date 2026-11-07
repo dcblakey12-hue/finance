@@ -50,7 +50,10 @@ final class BudgetService {
 
     static func summary(year: Int, month: Int, transactions: [TransactionRecord]) -> MonthlySummary {
         let cal = Calendar.current
-        let inMonth = transactions.filter { cal.component(.year, from: $0.date) == year && cal.component(.month, from: $0.date) == month }
+        let inMonth = transactions.filter {
+            $0.category != Categorizer.transfer &&
+            cal.component(.year, from: $0.date) == year && cal.component(.month, from: $0.date) == month
+        }
         let income = inMonth.filter { !$0.isExpense }.reduce(0) { $0 + $1.amount }
         let expenses = inMonth.filter { $0.isExpense }.reduce(0) { $0 + abs($1.amount) }
         return MonthlySummary(income: income, expenses: expenses, net: income - expenses)
@@ -76,7 +79,7 @@ final class BudgetService {
     }
 
     /// Names that can't be added as custom categories because the app uses them itself.
-    static let reservedCategories = ["Income", "Uncategorized"]
+    static let reservedCategories = ["Income", "Uncategorized", "Transfer"]
 
     /// Returns a cleaned name if it can be added, or nil if it's empty,
     /// reserved, or already exists (case-insensitive).
@@ -227,10 +230,10 @@ struct CategorySpend: Identifiable, Equatable {
 enum SpendingReport {
     typealias Row = (category: String, amount: Double, date: Date)
 
-    /// Expenses (negative amounts) in the period, summed per category, biggest first.
+    /// Expenses (negative amounts) in the period, summed per category, biggest first. Transfers are skipped.
     static func byCategory(_ rows: [Row], period: DashboardPeriod, now: Date = Date(), calendar: Calendar = .current) -> [CategorySpend] {
         var totals: [String: (amount: Double, count: Int)] = [:]
-        for r in rows where r.amount < 0 && period.contains(r.date, now: now, calendar: calendar) {
+        for r in rows where r.category != Categorizer.transfer && r.amount < 0 && period.contains(r.date, now: now, calendar: calendar) {
             let cur = totals[r.category] ?? (0, 0)
             totals[r.category] = (cur.amount + abs(r.amount), cur.count + 1)
         }
@@ -238,10 +241,10 @@ enum SpendingReport {
             .sorted { $0.amount != $1.amount ? $0.amount > $1.amount : $0.category < $1.category }
     }
 
-    /// Money in and money out within the period.
+    /// Money in and money out within the period, excluding transfers between your accounts.
     static func totals(_ rows: [Row], period: DashboardPeriod, now: Date = Date(), calendar: Calendar = .current) -> (income: Double, expenses: Double) {
         var income = 0.0, expenses = 0.0
-        for r in rows where period.contains(r.date, now: now, calendar: calendar) {
+        for r in rows where r.category != Categorizer.transfer && period.contains(r.date, now: now, calendar: calendar) {
             if r.amount < 0 { expenses += abs(r.amount) } else { income += r.amount }
         }
         return (income, expenses)

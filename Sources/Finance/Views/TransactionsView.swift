@@ -46,7 +46,7 @@ struct TransactionsView: View {
     var usedCategories: [String] { Array(Set(transactions.map { $0.category })).sorted() }
     /// Every category a transaction can be set to.
     var assignableCategories: [String] {
-        BudgetService.allCategories(stored: customCategories.map(\.name)) + ["Income", Categorizer.uncategorized]
+        BudgetService.allCategories(stored: customCategories.map(\.name)) + ["Income", Categorizer.transfer, Categorizer.uncategorized]
     }
 
     var body: some View {
@@ -67,6 +67,11 @@ struct TransactionsView: View {
                     status = n == 0 ? "No uncategorized transactions matched a rule." : "Categorized \(n) transaction\(n == 1 ? "" : "s")."
                 }
                 .help("Apply learned merchant rules and built-in keywords to uncategorized transactions")
+                Button("Find Transfers") {
+                    let n = CategorizationService.markTransfers(in: context)
+                    status = n == 0 ? "No matching transfers found." : "Marked \(n) transaction\(n == 1 ? "" : "s") as transfers between your accounts."
+                }
+                .help("Match equal and opposite amounts in different accounts within 3 days and mark them as Transfer")
             }.padding()
             if let status {
                 Text(status).font(.caption).foregroundStyle(.secondary)

@@ -200,3 +200,54 @@ final class DashboardReportTests: XCTestCase {
         XCTAssertEqual(SpendingReport.byCategory(rows, period: .allTime, now: now, calendar: cal).first?.category, "Dining")
     }
 }
+
+final class TransferTests: XCTestCase {
+    private var cal: Calendar = {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c
+    }()
+    private func d(_ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: m, day: day))! }
+    private func c(_ acct: String, _ amount: Double, _ date: Date) -> TransferDetector.Candidate {
+        .init(id: UUID(), accountId: acct, amount: amount, date: date)
+    }
+
+    func testCardPaymentPairsWithCheckingDebit() {
+        let out = c("checking", -500, d(11, 3)), inn = c("card", 500, d(11, 5))
+        let other = c("checking", -500, d(11, 20))
+        let pairs = TransferDetector.pairs([out, inn, other], calendar: cal)
+        XCTAssertEqual(pairs.count, 1)
+        XCTAssertEqual(pairs.first?.0, out.id)
+        XCTAssertEqual(pairs.first?.1, inn.id)
+    }
+
+    func testNoPairWithinSameAccountTooFarApartOrDifferentAmount() {
+        XCTAssertTrue(TransferDetector.pairs([c("a", -50, d(11, 3)), c("a", 50, d(11, 3))], calendar: cal).isEmpty)
+        XCTAssertTrue(TransferDetector.pairs([c("a", -50, d(11, 3)), c("b", 50, d(11, 10))], calendar: cal).isEmpty)
+        XCTAssertTrue(TransferDetector.pairs([c("a", -50, d(11, 3)), c("b", 51, d(11, 3))], calendar: cal).isEmpty)
+    }
+
+    func testEachTransactionUsedOnceClosestDateWins() {
+        let out = c("a", -100, d(11, 5))
+        let near = c("b", 100, d(11, 5)), far = c("b", 100, d(11, 7))
+        let pairs = TransferDetector.pairs([out, far, near], calendar: cal)
+        XCTAssertEqual(pairs.count, 1)
+        XCTAssertEqual(pairs.first?.1, near.id)
+    }
+
+    func testTransfersAreExcludedFromReports() {
+        let now = d(11, 7)
+        let rows: [SpendingReport.Row] = [
+            ("Transfer", -500, d(11, 3)), ("Transfer", 500, d(11, 3)),
+            ("Dining", -20, d(11, 4)), ("Income", 1000, d(11, 1)),
+        ]
+        let t = SpendingReport.totals(rows, period: .thisMonth, now: now, calendar: cal)
+        XCTAssertEqual(t.expenses, 20, accuracy: 0.001)
+        XCTAssertEqual(t.income, 1000, accuracy: 0.001)
+        XCTAssertEqual(SpendingReport.byCategory(rows, period: .thisMonth, now: now, calendar: cal).map(\.category), ["Dining"])
+    }
+
+    func testTransferKeywordsAndReservedName() {
+        XCTAssertEqual(Categorizer.category(forName: "PAYMENT THANK YOU", rules: [:]), "Transfer")
+        XCTAssertEqual(Categorizer.category(forName: "ONLINE TRANSFER TO SAV 1234", rules: [:]), "Transfer")
+        XCTAssertNil(BudgetService.validatedNewCategory("transfer", existing: []))
+    }
+}

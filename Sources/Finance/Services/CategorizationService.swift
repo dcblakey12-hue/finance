@@ -58,11 +58,16 @@ enum MerchantNormalizer {
 
 enum Categorizer {
     static let uncategorized = "Uncategorized"
+    /// Built-in category for money moved between your own accounts (credit card
+    /// payments, savings transfers). Excluded from spending, income and forecasts.
+    static let transfer = "Transfer"
 
     /// Built-in keyword hints, checked only when no learned rule matches.
     /// A keyword matches at the start of a word, so "RENT" matches "RENT PMT"
     /// but not "CURRENT" or "PARENTS".
     static let builtInKeywords: [(keyword: String, category: String)] = [
+        // Transfers between your own accounts (first so they win over merchant words)
+        ("PAYMENT THANK YOU", "Transfer"), ("CREDIT CARD PAYMENT", "Transfer"), ("TRANSFER", "Transfer"), ("XFER", "Transfer"),
         // Groceries
         ("WHOLE FOODS", "Groceries"), ("TRADER JOE", "Groceries"), ("KROGER", "Groceries"), ("SAFEWAY", "Groceries"),
         ("PUBLIX", "Groceries"), ("ALDI", "Groceries"), ("WEGMANS", "Groceries"), ("COSTCO", "Groceries"),
@@ -189,10 +194,10 @@ enum CategoryService {
     }
 
     /// Lowercased names built-in keyword guesses may use: the user's current
-    /// categories plus Income. Nil (no filtering) before categories are seeded.
+    /// categories plus Income and Transfer. Nil (no filtering) before categories are seeded.
     static func allowedBuiltIns(in context: ModelContext) -> Set<String>? {
         let names = ((try? context.fetch(FetchDescriptor<CustomCategory>())) ?? []).map { $0.name.lowercased() }
-        return names.isEmpty ? nil : Set(names + ["income"])
+        return names.isEmpty ? nil : Set(names + ["income", "transfer"])
     }
 
     /// Rename a category everywhere it's used: transactions, scheduled items,
@@ -255,5 +260,64 @@ enum CategoryService {
         case let m as CategoryRule: return m.category
         default: return nil
         }
+    }
+}
+
+// MARK: - Transfer detection
+
+enum TransferDetector {
+    struct Candidate {
+        let id: UUID
+        let accountId: String
+        let amount: Double
+        let date: Date
+    }
+
+    /// Pairs of transactions that look like one transfer: equal and opposite
+    /// amounts in *different* accounts, dated within `maxDays` of each other.
+    /// Each transaction is used at most once; the closest date wins.
+    static func pairs(_ txs: [Candidate], maxDays: Int = 3, calendar: Calendar = .current) -> [(UUID, UUID)] {
+        let outs = txs.filter { $0.amount < 0 }.sorted { $0.date < $1.date }
+        let ins = txs.filter { $0.amount > 0 }
+        var used = Set<UUID>()
+        var result: [(UUID, UUID)] = []
+        for out in outs {
+            var best: Candidate?
+            var bestGap = Int.max
+            for inn in ins where !used.contains(inn.id) && inn.accountId != out.accountId && abs(inn.amount + out.amount) < 0.005 {
+                let days = abs(calendar.dateComponents([.day], from: calendar.startOfDay(for: out.date),
+                                                       to: calendar.startOfDay(for: inn.date)).day ?? Int.max)
+                if days <= maxDays && days < bestGap { best = inn; bestGap = days }
+            }
+            if let best {
+                used.insert(best.id); used.insert(out.id)
+                result.append((out.id, best.id))
+            }
+        }
+        return result
+    }
+}
+
+@MainActor
+extension CategorizationService {
+    /// Mark matching opposite transactions across accounts as Transfers.
+    /// Only looks at Uncategorized and already-Transfer transactions, so categories
+    /// you chose yourself are never overwritten. Returns how many were newly marked.
+    @discardableResult
+    static func markTransfers(in context: ModelContext) -> Int {
+        let all = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
+        let pool = all.filter { $0.category == Categorizer.uncategorized || $0.category == Categorizer.transfer }
+        let byId = Dictionary(uniqueKeysWithValues: pool.map { ($0.id, $0) })
+        let pairs = TransferDetector.pairs(pool.map { .init(id: $0.id, accountId: $0.accountId, amount: $0.amount, date: $0.date) })
+        var changed = 0
+        for (a, b) in pairs {
+            for id in [a, b] {
+                if let tx = byId[id], tx.category != Categorizer.transfer {
+                    tx.category = Categorizer.transfer; changed += 1
+                }
+            }
+        }
+        try? context.save()
+        return changed
     }
 }
