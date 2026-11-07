@@ -53,6 +53,13 @@ struct FinanceApp: App {
         .commands {
             SidebarCommands()
             ToolbarCommands()
+            CommandGroup(after: .newItem) {
+                Divider()
+                Button("Back Up Data…") { BackupCoordinator.shared.backUp(sharedModelContainer.mainContext) }
+                    .keyboardShortcut("b", modifiers: [.command, .shift])
+                Button("Restore from Backup…") { BackupCoordinator.shared.chooseRestore(sharedModelContainer.mainContext) }
+                Button("Start New Empty File…") { BackupCoordinator.shared.startNew(sharedModelContainer.mainContext) }
+            }
         }
     }
 }
