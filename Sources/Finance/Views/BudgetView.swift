@@ -45,6 +45,7 @@ struct BudgetView: View {
                 HStack(spacing: 16) {
                     KpiCard(title: checkingAccountIds == nil ? "Income" : "Income (checking)", value: currency.string(from: NSNumber(value: summary.income)) ?? "", icon: "arrow.down.circle")
                     KpiCard(title: "Spent", value: currency.string(from: NSNumber(value: summary.expenses)) ?? "", icon: "arrow.up.circle")
+                    KpiCard(title: "Balance (income − spent)", value: currency.string(from: NSNumber(value: summary.net)) ?? "", icon: "scalemass")
                     KpiCard(title: "Left to budget", value: currency.string(from: NSNumber(value: summary.income - thisMonth.reduce(0) { $0 + $1.allocated })) ?? "", icon: "envelope")
                 }
                 Text("Tap an amount to edit. Spent updates automatically from transactions in that category.").font(.caption).foregroundStyle(.secondary)
