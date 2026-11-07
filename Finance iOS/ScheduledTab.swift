@@ -16,14 +16,19 @@ struct ScheduledTab: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(schedules) { s in
+                ForEach(ScheduleService.orderedByNextDue(schedules)) { s in
                     Button { editing = EditTarget(existing: s) } label: {
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(s.name).foregroundStyle(s.isActive ? Color.primary : .secondary)
                                 Text(s.isTransfer ? (s.item(accountNames: names).detail ?? "Transfer") : s.category)
                                     .font(.caption).foregroundStyle(.secondary)
-                                Text("Day \(s.dueDay)").font(.caption2).foregroundStyle(.secondary)
+                                if s.isActive, let d = ScheduleService.nextDueDate(dueDay: s.dueDay, from: Date()) {
+                                    Text("Next: \(d.formatted(.dateTime.month(.abbreviated).day().year()))")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                } else {
+                                    Text("Paused • day \(s.dueDay)").font(.caption2).foregroundStyle(.secondary)
+                                }
                             }
                             Spacer()
                             Text(money(s.signedAmount)).monospacedDigit()
@@ -32,7 +37,8 @@ struct ScheduledTab: View {
                     }
                 }
                 .onDelete { idx in
-                    idx.map { schedules[$0] }.forEach(context.delete)
+                    let ordered = ScheduleService.orderedByNextDue(schedules)
+                    idx.map { ordered[$0] }.forEach(context.delete)
                     try? context.save()
                 }
             }

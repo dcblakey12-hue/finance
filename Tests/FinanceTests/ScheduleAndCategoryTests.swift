@@ -688,3 +688,19 @@ final class ManualTransactionTests: XCTestCase {
         XCTAssertTrue(ManualTransactionService.matches(m, amount: -10, date: Date()))
     }
 }
+
+@MainActor
+final class ScheduleOrderingTests: XCTestCase {
+    func testNextDueFirstThenRollOverThenPaused() {
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!
+        let today = cal.date(from: DateComponents(year: 2026, month: 11, day: 12))!
+        func bill(_ name: String, _ day: Int, active: Bool = true) -> RecurringBill {
+            RecurringBill(name: name, amount: 10, dueDay: day, category: "Other", isActive: active)
+        }
+        let ordered = ScheduleService.orderedByNextDue(
+            [bill("Rent", 1), bill("Phone", 20), bill("Gym", 12), bill("Old", 5, active: false), bill("Water", 15)],
+            from: today, calendar: cal)
+        // Today (12) first, then 15, 20, then Rent (1st, rolls to Dec 1), then paused.
+        XCTAssertEqual(ordered.map(\.name), ["Gym", "Water", "Phone", "Rent", "Old"])
+    }
+}

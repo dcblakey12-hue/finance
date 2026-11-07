@@ -59,6 +59,17 @@ enum ScheduleService {
         BudgetSync.apply(in: context)
     }
 
+    /// Schedules in the order they come due: the next payment first, then the rest through the
+    /// month, then the ones whose day has already passed (they roll over to next month).
+    /// Paused schedules go last.
+    @MainActor
+    static func orderedByNextDue(_ bills: [RecurringBill], from: Date = Date(), calendar: Calendar = .current) -> [RecurringBill] {
+        func next(_ b: RecurringBill) -> Date { nextDueDate(dueDay: b.dueDay, from: from, calendar: calendar) ?? .distantFuture }
+        let active = bills.filter(\.isActive).sorted { (next($0), $0.name) < (next($1), $1.name) }
+        let paused = bills.filter { !$0.isActive }.sorted { ($0.dueDay, $0.name) < ($1.dueDay, $1.name) }
+        return active + paused
+    }
+
     /// Next date on or after `from` (start of day) that falls on `dueDay`.
     static func nextDueDate(dueDay: Int, from: Date, calendar: Calendar = .current) -> Date? {
         let day = min(max(dueDay, 1), 28)

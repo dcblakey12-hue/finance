@@ -34,7 +34,7 @@ struct ScheduledView: View {
                     systemImage: "calendar.badge.clock",
                     description: Text("Click Add, or right-click a transaction and choose Schedule as Recurring…"))
             } else {
-                Table(schedules, selection: $selection) {
+                Table(ScheduleService.orderedByNextDue(schedules), selection: $selection) {
                     TableColumn("Name") { s in
                         Text(s.name).foregroundStyle(s.isActive ? .primary : .secondary)
                     }
@@ -45,11 +45,11 @@ struct ScheduledView: View {
                     }.width(80)
                     TableColumn("Category / accounts") { s in Text(s.isTransfer ? routeText(s) : s.category) }
                     TableColumn("Day") { s in Text("\(s.dueDay)").monospacedDigit() }.width(40)
-                    TableColumn("Next") { s in
+                    TableColumn("Next due") { s in
                         if s.isActive, let d = ScheduleService.nextDueDate(dueDay: s.dueDay, from: Date()) {
-                            Text(d, format: .dateTime.month(.abbreviated).day())
+                            Text(d, format: .dateTime.month(.abbreviated).day().year())
                         } else { Text("—").foregroundStyle(.secondary) }
-                    }.width(70)
+                    }.width(100)
                     TableColumn("Amount") { s in
                         Text(currency.string(from: NSNumber(value: s.signedAmount)) ?? "")
                             .monospacedDigit().foregroundStyle(s.isIncome ? .green : (s.isTransfer ? .blue : .primary))
