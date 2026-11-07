@@ -190,8 +190,10 @@ struct CalendarView: View {
                         .disabled(bills.filter(\.isActive).isEmpty)
                     Button("Remove from Mac Calendar") { clear() }.buttonStyle(.bordered)
                 } else {
-                    Button("Allow Calendar Access") { Task { await calService.requestAccess() } }.buttonStyle(.borderedProminent)
-                    Text("Needs permission in System Settings → Privacy & Security → Calendars.")
+                    Button("Allow Calendar Access") { allowAccess() }.buttonStyle(.borderedProminent)
+                    Text(calService.access == .denied || calService.access == .restricted
+                         ? "Calendar access is off for this app. Turn it on in System Settings → Privacy & Security → Calendars."
+                         : "macOS will ask for permission.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -201,6 +203,20 @@ struct CalendarView: View {
 
     // MARK: - Actions
 
+    private func allowAccess() {
+        if calService.access == .denied || calService.access == .restricted {
+            // macOS only asks once; after a "Don't Allow" the switch lives in System Settings.
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
+                NSWorkspace.shared.open(url)
+            }
+            status = "Opened System Settings. Enable Finance under Calendars, then come back."
+        } else {
+            Task {
+                await calService.requestAccess()
+                status = calService.isAuthorized ? "Calendar access granted." : "Calendar access wasn't granted (status: \(calService.access.rawValue))."
+            }
+        }
+    }
     private func shift(_ delta: Int) {
         month = calendar.date(byAdding: .month, value: delta, to: month) ?? month
     }
