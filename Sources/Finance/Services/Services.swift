@@ -24,16 +24,79 @@ final class TransactionImportService {
         let rules = CategorizationService.ruleMap(in: context)
         let allowed = CategoryService.allowedBuiltIns(in: context)
         var inserted = 0, skipped = 0
+        // Transactions typed in by hand (e.g. on the phone) that the bank has now reported.
+        var manual = existingRecords.filter { $0.accountId == acctId && ManualTransactionService.isManual($0) }
         for t in parsed.transactions {
             let key = "\(acctId)|\(t.fitid)"
             if existingFitIds.contains(key) { skipped += 1; continue }
             let category = Categorizer.category(forName: t.name, rules: rules, allowed: allowed) ?? Categorizer.uncategorized
             let rec = TransactionRecord(fitid: t.fitid, accountId: acctId, accountName: account.name, date: t.date, name: t.name, amount: t.amount, type: t.type, category: category, memo: t.memo)
+            // Replace the matching hand-entered transaction so it isn't counted twice,
+            // keeping the category you chose and any transfer link.
+            if let i = manual.firstIndex(where: { ManualTransactionService.matches($0, amount: t.amount, date: t.date) }) {
+                let m = manual.remove(at: i)
+                if m.category != Categorizer.uncategorized { rec.category = m.category }
+                rec.transferPeerId = m.transferPeerId
+                for other in existingRecords where other.transferPeerId == m.id { other.transferPeerId = rec.id }
+                context.delete(m)
+            }
             context.insert(rec)
             inserted += 1
         }
         try? context.save()
         return (inserted, skipped)
+    }
+}
+
+// MARK: - Hand-entered transactions
+
+/// Transactions typed in directly (phone or Mac) rather than imported from a bank file.
+/// They are given a "manual-" id and are replaced automatically when the bank's own record
+/// of the same amount arrives within a few days.
+@MainActor
+enum ManualTransactionService {
+    static let prefix = "manual-"
+    static let matchWindowDays = 5
+
+    static func isManual(_ t: TransactionRecord) -> Bool { t.fitid.hasPrefix(prefix) }
+
+    /// Would `t` (a hand-entered record) be the same purchase as an imported one?
+    static func matches(_ t: TransactionRecord, amount: Double, date: Date, calendar: Calendar = .current) -> Bool {
+        guard t.amount == amount else { return false }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: t.date), to: calendar.startOfDay(for: date)).day ?? Int.max
+        return abs(days) <= matchWindowDays
+    }
+
+    /// Add a transaction by hand. `amount` is signed (negative = money out). The account's
+    /// balance moves by the same amount until the next statement sets it exactly.
+    @discardableResult
+    static func add(to account: Account, date: Date, name: String, amount: Double,
+                    category: String? = nil, memo: String = "", in context: ModelContext) -> TransactionRecord {
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chosen = category ?? Categorizer.category(forName: cleaned, rules: CategorizationService.ruleMap(in: context),
+                                                       allowed: CategoryService.allowedBuiltIns(in: context))
+            ?? Categorizer.uncategorized
+        let tx = TransactionRecord(fitid: prefix + UUID().uuidString, accountId: account.accountId, accountName: account.name,
+                                   date: date, name: cleaned, amount: amount, type: amount < 0 ? .debit : .credit,
+                                   category: chosen, memo: memo)
+        context.insert(tx)
+        account.balance += amount
+        try? context.save()
+        return tx
+    }
+
+    /// Delete a hand-entered transaction and undo its effect on the balance.
+    /// Does nothing for imported transactions.
+    @discardableResult
+    static func delete(_ tx: TransactionRecord, from accounts: [Account], in context: ModelContext) -> Bool {
+        guard isManual(tx) else { return false }
+        accounts.first { $0.accountId == tx.accountId }?.balance -= tx.amount
+        for other in (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? [] where other.transferPeerId == tx.id {
+            other.transferPeerId = nil
+        }
+        context.delete(tx)
+        try? context.save()
+        return true
     }
 }
 

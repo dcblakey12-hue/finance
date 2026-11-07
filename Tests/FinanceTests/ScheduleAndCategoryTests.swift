@@ -638,3 +638,53 @@ final class DedupeServiceTests: XCTestCase {
         XCTAssertEqual(DedupeService.run(in: context), 0)              // idempotent
     }
 }
+
+@MainActor
+final class ManualTransactionTests: XCTestCase {
+    private var context: ModelContext!
+    override func setUp() async throws {
+        let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        context = ModelContext(container)
+    }
+
+    func testAddMovesBalanceAndDeleteUndoesIt() {
+        let acct = Account(name: "Checking", type: .checking, accountId: "chk", bankName: "B", balance: 100)
+        context.insert(acct)
+        let tx = ManualTransactionService.add(to: acct, date: Date(), name: "Coffee", amount: -4.5, category: "Dining", in: context)
+        XCTAssertEqual(acct.balance, 95.5)
+        XCTAssertTrue(ManualTransactionService.isManual(tx))
+        XCTAssertEqual(tx.category, "Dining")
+        XCTAssertTrue(ManualTransactionService.delete(tx, from: [acct], in: context))
+        XCTAssertEqual(acct.balance, 100)
+        XCTAssertEqual(try! context.fetch(FetchDescriptor<TransactionRecord>()).count, 0)
+    }
+
+    func testImportReplacesMatchingManualEntryKeepingCategory() {
+        let acct = Account(name: "Checking", type: .checking, accountId: "chk", bankName: "B", balance: 100)
+        context.insert(acct)
+        let manual = ManualTransactionService.add(to: acct, date: Date(), name: "Lunch", amount: -12, category: "Dining", in: context)
+        let other = ManualTransactionService.add(to: acct, date: Date(), name: "Gas", amount: -40, category: "Transport", in: context)
+        let parsed = ParsedOFXFile(bankId: "B", accountId: "chk", accountName: "Checking", balance: 48,
+            transactions: [OFXTransaction(fitid: "BANK1", accountId: "chk", date: Date(), name: "SQ *CAFE 123", amount: -12, type: .debit, memo: "")])
+        let r = TransactionImportService().importParsed(parsed, into: context)
+        XCTAssertEqual(r.inserted, 1)
+        let all = try! context.fetch(FetchDescriptor<TransactionRecord>())
+        XCTAssertEqual(all.count, 2)                                    // lunch replaced, gas kept
+        XCTAssertFalse(all.contains { $0.id == manual.id })
+        XCTAssertTrue(all.contains { $0.id == other.id })
+        XCTAssertEqual(all.first { $0.fitid == "BANK1" }?.category, "Dining")
+        XCTAssertEqual(acct.balance, 48)                                // statement balance wins
+    }
+
+    func testMatchWindowAndAmount() {
+        let acct = Account(name: "C", type: .checking, accountId: "c", bankName: "B")
+        context.insert(acct)
+        let m = ManualTransactionService.add(to: acct, date: Date(), name: "x", amount: -10, in: context)
+        let farOff = Calendar.current.date(byAdding: .day, value: 9, to: Date())!
+        XCTAssertFalse(ManualTransactionService.matches(m, amount: -10, date: farOff))
+        XCTAssertFalse(ManualTransactionService.matches(m, amount: -11, date: Date()))
+        XCTAssertTrue(ManualTransactionService.matches(m, amount: -10, date: Date()))
+    }
+}

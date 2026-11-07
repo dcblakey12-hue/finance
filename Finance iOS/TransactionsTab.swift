@@ -14,6 +14,7 @@ struct TransactionsTab: View {
     @State private var search = ""
     @State private var accountFilter: String?     // used only when not pushed from an account
     @State private var categoryFilter = "All"
+    @State private var adding = false
 
     private var effectiveAccount: String? { accountId ?? accountFilter }
     private var rows: [TransactionRecord] {
@@ -31,10 +32,14 @@ struct TransactionsTab: View {
     }
 
     private var content: some View {
-        List(rows.prefix(500)) { t in
+        List {
+            ForEach(rows.prefix(500)) { t in
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(t.name).lineLimit(1)
+                    if ManualTransactionService.isManual(t) {
+                        Text("manual").font(.caption2).foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Text(money(t.amount)).monospacedDigit().foregroundStyle(t.amount < 0 ? Color.primary : .green)
                 }
@@ -46,10 +51,23 @@ struct TransactionsTab: View {
                 }
                 .font(.caption).foregroundStyle(.secondary)
             }
+            }
+            .onDelete { idx in
+                // Only hand-entered transactions can be deleted; imported ones come from the bank.
+                let shown = Array(rows.prefix(500))
+                for i in idx { ManualTransactionService.delete(shown[i], from: accounts, in: context) }
+            }
         }
         .navigationTitle(title)
         .searchable(text: $search)
+        .sheet(isPresented: $adding) {
+            AddTransactionSheet(accounts: accounts, preselected: accountId, categories: allCategoryChoices(customCategories))
+        }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { adding = true } label: { Image(systemName: "plus") }
+                    .disabled(accounts.isEmpty)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     if accountId == nil {
@@ -88,5 +106,64 @@ struct TransactionsTab: View {
             TransferLinkService.detach(t, among: transactions)
         }
         CategorizationService.learn(from: t, category: category, in: context)
+    }
+}
+
+
+struct AddTransactionSheet: View {
+    let accounts: [Account]
+    let preselected: String?
+    let categories: [String]
+
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    @State private var accountId: String?
+    @State private var isIncome = false
+    @State private var amountText = ""
+    @State private var name = ""
+    @State private var date = Date()
+    @State private var category = Categorizer.uncategorized
+    @State private var note = ""
+
+    private var amount: Double { Double(amountText.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: "")) ?? 0 }
+    private var canSave: Bool { accountId != nil && amount > 0 && !name.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Picker("Account", selection: $accountId) {
+                    ForEach(accounts) { Text($0.name).tag(Optional($0.accountId)) }
+                }
+                Picker("Type", selection: $isIncome) {
+                    Text("Expense").tag(false); Text("Income / deposit").tag(true)
+                }.pickerStyle(.segmented)
+                TextField("Payee or description", text: $name)
+                TextField("Amount", text: $amountText).keyboardType(.decimalPad)
+                DatePicker("Date", selection: $date, displayedComponents: .date)
+                Picker("Category", selection: $category) {
+                    ForEach(categories, id: \.self) { Text($0).tag($0) }
+                }
+                TextField("Note (optional)", text: $note)
+                Text("The account balance moves now. When the bank's own record of this arrives in an import, it replaces this entry.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .navigationTitle("Add Transaction")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard let id = accountId, let account = accounts.first(where: { $0.accountId == id }) else { return }
+                        let signed = isIncome ? amount : -amount
+                        // Leave the category to auto-detect unless the user picked one.
+                        ManualTransactionService.add(to: account, date: date, name: name, amount: signed,
+                                                     category: category == Categorizer.uncategorized ? nil : category,
+                                                     memo: note, in: context)
+                        dismiss()
+                    }.disabled(!canSave)
+                }
+            }
+        }
+        .onAppear { accountId = accountId ?? preselected ?? accounts.first?.accountId }
     }
 }
