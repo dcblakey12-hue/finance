@@ -176,13 +176,13 @@ enum PlaidMapping {
     static func splitKnown(_ incoming: [OFXTransaction], existing: [TransactionRecord],
                            calendar: Calendar = .current) -> (new: [OFXTransaction], adopt: [(record: TransactionRecord, fitid: String)]) {
         var pool = existing.filter { !$0.fitid.hasPrefix(prefix) && !ManualTransactionService.isManual($0) }
-        var new: [OFXTransaction] = [], adopt: [(TransactionRecord, String)] = []
+        var new: [OFXTransaction] = [], adopt: [(record: TransactionRecord, fitid: String)] = []
         for t in incoming {
             if let i = pool.firstIndex(where: {
                 $0.amount == t.amount &&
                 abs(calendar.dateComponents([.day], from: calendar.startOfDay(for: $0.date), to: calendar.startOfDay(for: t.date)).day ?? 99) <= 2
             }) {
-                adopt.append((pool.remove(at: i), t.fitid))
+                adopt.append((record: pool.remove(at: i), fitid: t.fitid))
             } else { new.append(t) }
         }
         return (new, adopt)
