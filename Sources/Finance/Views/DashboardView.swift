@@ -8,6 +8,8 @@ struct DashboardView: View {
 
     /// Called with an account's OFX accountId when its row is double-clicked.
     var onOpenAccount: (String) -> Void = { _ in }
+    /// Called with a category name and the selected period when a category row is double-clicked.
+    var onOpenCategory: (String, DashboardPeriod) -> Void = { _, _ in }
 
     @AppStorage("finance.dashboard.period") private var periodRaw = DashboardPeriod.thisMonth.rawValue
     private var period: DashboardPeriod { DashboardPeriod(rawValue: periodRaw) ?? .thisMonth }
@@ -36,7 +38,7 @@ struct DashboardView: View {
                 }
 
                 Text("Spending by category — \(period.rawValue)").font(.headline)
-                Text("Transfers between your accounts (category “Transfer”) are not counted.").font(.caption).foregroundStyle(.secondary)
+                Text("Double-click a category to see its transactions. Transfers between your accounts (category “Transfer”) are not counted.").font(.caption).foregroundStyle(.secondary)
                 if categorySpend.isEmpty {
                     Text("No spending in this period.").foregroundStyle(.secondary)
                 } else {
@@ -55,6 +57,9 @@ struct DashboardView: View {
                                 .monospacedDigit()
                                 .frame(width: 100, alignment: .trailing)
                         }
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { onOpenCategory(c.category, period) }
+                        .help("Double-click to see these transactions")
                     }
                     Divider()
                     HStack {

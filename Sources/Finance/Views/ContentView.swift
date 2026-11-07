@@ -29,6 +29,11 @@ struct ContentView: View {
     @State private var selection: AppSection? = .dashboard
     /// OFX accountId shown in Transactions; nil = all accounts.
     @State private var transactionsAccount: String?
+    @State private var transactionsCategory = "All"
+    @State private var transactionsPeriod: DashboardPeriod = .allTime
+    /// True while a double-click drill-down is switching to Transactions, so the
+    /// filters it set aren't cleared by the sidebar-navigation reset below.
+    @State private var isDrillDown = false
     var body: some View {
         NavigationSplitView {
             List(AppSection.allCases, selection: $selection) { s in
@@ -39,16 +44,15 @@ struct ContentView: View {
             if let sel = selection {
                 switch sel {
                 case .dashboard:
-                    DashboardView(onOpenAccount: { acctId in
-                        transactionsAccount = acctId
-                        selection = .transactions
-                    })
+                    DashboardView(
+                        onOpenAccount: { openTransactions(account: $0) },
+                        onOpenCategory: { openTransactions(category: $0, period: $1) })
                 case .accounts:
-                    AccountsView(onOpenTransactions: { acctId in
-                        transactionsAccount = acctId
-                        selection = .transactions
-                    })
-                case .transactions: TransactionsView(accountFilter: $transactionsAccount)
+                    AccountsView(onOpenTransactions: { openTransactions(account: $0) })
+                case .transactions:
+                    TransactionsView(accountFilter: $transactionsAccount,
+                                     categoryFilter: $transactionsCategory,
+                                     periodFilter: $transactionsPeriod)
                 case .budget: BudgetView()
                 case .scheduled: ScheduledView()
                 case .calendar: CalendarView()
@@ -60,5 +64,21 @@ struct ContentView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .task { CategoryService.seedIfNeeded(in: context) }
+        .onChange(of: selection) { _, new in
+            // Opening Transactions from the sidebar starts unfiltered; a drill-down keeps its filters.
+            if new == .transactions && !isDrillDown {
+                transactionsAccount = nil; transactionsCategory = "All"; transactionsPeriod = .allTime
+            }
+            isDrillDown = false
+        }
+    }
+
+    /// Jump to Transactions with the given filters (nil/"All"/all-time = no filter).
+    private func openTransactions(account: String? = nil, category: String = "All", period: DashboardPeriod = .allTime) {
+        transactionsAccount = account
+        transactionsCategory = category
+        transactionsPeriod = period
+        isDrillDown = true
+        selection = .transactions
     }
 }

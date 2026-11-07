@@ -9,8 +9,11 @@ struct TransactionsView: View {
     /// OFX accountId to show; nil = all accounts. Owned by ContentView so
     /// double-clicking an account in Accounts can preselect it.
     @Binding var accountFilter: String?
+    /// "All" or a category name. Owned by ContentView so the Dashboard can open a category.
+    @Binding var categoryFilter: String
+    /// Date range; .allTime shows everything. Also set by the Dashboard drill-down.
+    @Binding var periodFilter: DashboardPeriod
     @State private var search = ""
-    @State private var categoryFilter: String = "All"
     @State private var status: String?
     @State private var scheduleEditor: ScheduleEditor?
     /// Transaction waiting for a newly created category.
@@ -20,6 +23,7 @@ struct TransactionsView: View {
         transactions.filter { t in
             (accountFilter == nil || t.accountId == accountFilter) &&
             (categoryFilter == "All" || t.category == categoryFilter) &&
+            (periodFilter == .allTime || periodFilter.contains(t.date)) &&
             (search.isEmpty || t.name.localizedCaseInsensitiveContains(search) || t.memo.localizedCaseInsensitiveContains(search))
         }
     }
@@ -57,10 +61,14 @@ struct TransactionsView: View {
                     ForEach(accounts) { a in Text(a.name).tag(String?.some(a.accountId)) }
                 }
                 .frame(maxWidth: 220)
+                Picker("Period", selection: $periodFilter) {
+                    ForEach(DashboardPeriod.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .frame(maxWidth: 170)
                 TextField("Search transactions", text: $search).textFieldStyle(.roundedBorder)
                 Picker("Category", selection: $categoryFilter) {
                     Text("All").tag("All")
-                    ForEach(usedCategories, id: \.self) { c in Text(c).tag(c) }
+                    ForEach(Array(Set(usedCategories + [categoryFilter]).subtracting(["All"])).sorted(), id: \.self) { c in Text(c).tag(c) }
                 }
                 Button("Auto-categorize") {
                     let n = CategorizationService.categorizeUncategorized(in: context)
