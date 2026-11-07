@@ -73,9 +73,12 @@ struct TransactionsView: View {
             let runningBalances = balances
             List(filtered) { tx in
                 HStack {
+                    Text(tx.date, format: .dateTime.month(.abbreviated).day().year())
+                        .monospacedDigit()
+                        .frame(width: 100, alignment: .leading)
                     VStack(alignment: .leading) {
                         Text(tx.name).font(.headline)
-                        Text(tx.date, style: .date).font(.caption).foregroundStyle(.secondary)
+                        Text(tx.accountName).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Picker("Category", selection: Binding(
