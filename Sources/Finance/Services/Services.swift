@@ -86,6 +86,24 @@ final class BudgetService {
     }
 }
 
+// MARK: - Running balance
+
+enum RunningBalance {
+    /// Balance after each transaction, anchored so the newest transaction ends
+    /// at `endingBalance` (the account's current balance) and older rows are
+    /// found by undoing the newer transactions' amounts.
+    /// `newestFirst` must already be sorted newest to oldest.
+    static func compute(newestFirst: [(id: UUID, amount: Double)], endingBalance: Double) -> [UUID: Double] {
+        var result: [UUID: Double] = [:]
+        var balance = endingBalance
+        for tx in newestFirst {
+            result[tx.id] = balance
+            balance -= tx.amount
+        }
+        return result
+    }
+}
+
 // MARK: - Calendar (Bills + EventKit)
 
 @MainActor

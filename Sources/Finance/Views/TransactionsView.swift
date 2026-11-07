@@ -23,6 +23,22 @@ struct TransactionsView: View {
             (search.isEmpty || t.name.localizedCaseInsensitiveContains(search) || t.memo.localizedCaseInsensitiveContains(search))
         }
     }
+    /// Transactions in the selected account(s), ignoring search and category
+    /// filters so the running balance stays correct while filtering.
+    private var inScope: [TransactionRecord] {
+        accountFilter == nil ? transactions : transactions.filter { $0.accountId == accountFilter }
+    }
+    /// Current balance the newest transaction should end at: the selected
+    /// account's balance, or all accounts combined.
+    private var endingBalance: Double {
+        accountFilter == nil ? accounts.reduce(0) { $0 + $1.balance }
+                             : (accounts.first { $0.accountId == accountFilter }?.balance ?? 0)
+    }
+    private var balances: [UUID: Double] {
+        RunningBalance.compute(newestFirst: inScope.map { ($0.id, $0.amount) }, endingBalance: endingBalance)
+    }
+    private var shownNet: Double { filtered.reduce(0) { $0 + $1.amount } }
+
     /// Categories in use, for the filter menu.
     var usedCategories: [String] { Array(Set(transactions.map { $0.category })).sorted() }
     /// Every category a transaction can be set to.
@@ -54,6 +70,7 @@ struct TransactionsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal).padding(.bottom, 6)
             }
+            let runningBalances = balances
             List(filtered) { tx in
                 HStack {
                     VStack(alignment: .leading) {
@@ -73,6 +90,11 @@ struct TransactionsView: View {
                         .foregroundStyle(tx.isExpense ? .red : .green)
                         .monospacedDigit()
                         .frame(width: 100, alignment: .trailing)
+                    Text(runningBalances[tx.id].flatMap { currency.string(from: NSNumber(value: $0)) } ?? "")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .frame(width: 110, alignment: .trailing)
+                        .help("Running balance after this transaction")
                 }
                 .padding(.vertical, 2)
                 .contentShape(Rectangle())
@@ -90,6 +112,24 @@ struct TransactionsView: View {
                     }
                 }
             }
+        }
+        .safeAreaInset(edge: .bottom) {
+            HStack(spacing: 16) {
+                Text("\(filtered.count) transaction\(filtered.count == 1 ? "" : "s")")
+                Spacer()
+                HStack(spacing: 4) {
+                    Text("Net shown:").foregroundStyle(.secondary)
+                    Text(currency.string(from: NSNumber(value: shownNet)) ?? "")
+                        .foregroundStyle(shownNet < 0 ? Color.red : Color.green)
+                }
+                HStack(spacing: 4) {
+                    Text("Balance:").foregroundStyle(.secondary)
+                    Text(currency.string(from: NSNumber(value: endingBalance)) ?? "")
+                }
+            }
+            .font(.callout.monospacedDigit())
+            .padding(.horizontal).padding(.vertical, 6)
+            .background(.bar)
         }
         .navigationTitle(accounts.first { $0.accountId == accountFilter }?.name ?? "Transactions")
         .sheet(item: $scheduleEditor) { ed in

@@ -47,3 +47,18 @@ final class ScheduleAndCategoryTests: XCTestCase {
         XCTAssertNil(BudgetService.validatedNewCategory("   ", existing: existing))
     }
 }
+
+final class RunningBalanceTests: XCTestCase {
+    func testBalancesWalkBackFromEndingBalance() {
+        let a = UUID(), b = UUID(), c = UUID()
+        // Newest first: +100 paycheck, -30 groceries, -20 coffee. Ends at 500.
+        let r = RunningBalance.compute(newestFirst: [(a, 100), (b, -30), (c, -20)], endingBalance: 500)
+        XCTAssertEqual(r[a]!, 500, accuracy: 0.001)
+        XCTAssertEqual(r[b]!, 400, accuracy: 0.001)   // before the paycheck
+        XCTAssertEqual(r[c]!, 430, accuracy: 0.001)   // before groceries
+    }
+
+    func testEmptyList() {
+        XCTAssertTrue(RunningBalance.compute(newestFirst: [], endingBalance: 10).isEmpty)
+    }
+}
