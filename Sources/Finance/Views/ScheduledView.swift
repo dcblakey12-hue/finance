@@ -16,8 +16,8 @@ struct ScheduledView: View {
     private var accountNames: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
     private func routeText(_ s: RecurringBill) -> String { s.item(accountNames: accountNames).detail ?? "Transfer" }
     private var categories: [String] { BudgetService.allCategories(stored: customCategories.map(\.name)) }
-    private var monthlyIncome: Double { schedules.filter { $0.isActive && $0.isIncome }.reduce(0) { $0 + abs($1.amount) } }
-    private var monthlyBills: Double { schedules.filter { $0.isActive && $0.isExpense }.reduce(0) { $0 + abs($1.amount) } }
+    private var monthlyIncome: Double { schedules.filter { $0.isActive && $0.isIncome }.reduce(0) { $0 + $1.monthlySize } }
+    private var monthlyBills: Double { schedules.filter { $0.isActive && $0.isExpense }.reduce(0) { $0 + $1.monthlySize } }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,9 +44,9 @@ struct ScheduledView: View {
                             .background(s.isTransfer ? Color.blue.opacity(0.18) : (s.isIncome ? Color.green.opacity(0.2) : Color.red.opacity(0.15)), in: Capsule())
                     }.width(80)
                     TableColumn("Category / accounts") { s in Text(s.isTransfer ? routeText(s) : s.category) }
-                    TableColumn("Day") { s in Text("\(s.dueDay)").monospacedDigit() }.width(40)
+                    TableColumn("Repeats") { s in Text(s.rule.summary()) }.width(min: 130, ideal: 170)
                     TableColumn("Next due") { s in
-                        if s.isActive, let d = ScheduleService.nextDueDate(dueDay: s.dueDay, from: Date()) {
+                        if s.isActive, let d = s.rule.nextDate(from: Date()) {
                             Text(d, format: .dateTime.month(.abbreviated).day().year())
                         } else { Text("—").foregroundStyle(.secondary) }
                     }.width(100)
@@ -107,7 +107,8 @@ struct ScheduledView: View {
     private func draft(of s: RecurringBill) -> ScheduleDraft {
         ScheduleDraft(name: s.name, amount: abs(s.amount), dueDay: s.dueDay, category: s.category, isIncome: s.isIncome,
                       isActive: s.isActive, isTransfer: s.isTransfer,
-                      fromAccountId: s.fromAccountId, toAccountId: s.toAccountId)
+                      fromAccountId: s.fromAccountId, toAccountId: s.toAccountId,
+                      frequency: s.rule.frequency, secondDay: s.secondDay, startDate: s.anchorDate)
     }
 
     private func total(_ title: String, _ value: Double, _ color: Color) -> some View {
@@ -152,7 +153,12 @@ struct ScheduleEditorSheet: View {
     private var transferOK: Bool {
         !draft.isTransfer || (draft.fromAccountId != nil && draft.toAccountId != nil && draft.fromAccountId != draft.toAccountId)
     }
-    private var canSave: Bool { !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && (parsedAmount ?? 0) > 0 && transferOK }
+    private var canSave: Bool {
+        !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && (parsedAmount ?? 0) > 0 && transferOK && draft.scheduleIsValid
+    }
+    private var startDateBinding: Binding<Date> {
+        Binding(get: { draft.startDate ?? Date() }, set: { draft.startDate = $0 })
+    }
     /// 0 = bill, 1 = income, 2 = transfer
     private var kind: Binding<Int> {
         Binding(get: { draft.isTransfer ? 2 : (draft.isIncome ? 1 : 0) },
@@ -170,8 +176,26 @@ struct ScheduleEditorSheet: View {
             Form {
                 TextField("Name", text: $draft.name)
                 TextField("Amount", text: $amountText)
-                Picker(draft.isIncome ? "Payday" : (draft.isTransfer ? "Day" : "Due day"), selection: $draft.dueDay) {
-                    ForEach(1...28, id: \.self) { Text(ordinal($0)).tag($0) }
+                Picker("Repeats", selection: $draft.frequency) {
+                    ForEach(ScheduleFrequency.allCases) { Text($0.label).tag($0) }
+                }
+                switch draft.frequency {
+                case .monthly:
+                    Picker(draft.isIncome ? "Payday" : (draft.isTransfer ? "Day" : "Due day"), selection: $draft.dueDay) {
+                        ForEach(1...28, id: \.self) { Text(ordinal($0)).tag($0) }
+                    }
+                case .semimonthly:
+                    Picker("First day", selection: $draft.dueDay) {
+                        ForEach(1...28, id: \.self) { Text(ordinal($0)).tag($0) }
+                    }
+                    Picker("Second day", selection: $draft.secondDay) {
+                        ForEach(1...28, id: \.self) { Text(ordinal($0)).tag($0) }
+                    }
+                    if !draft.scheduleIsValid { Text("Pick two different days.").font(.caption).foregroundStyle(.red) }
+                case .weekly, .biweekly:
+                    DatePicker(draft.isIncome ? "A payday" : "A date it lands on", selection: startDateBinding, displayedComponents: .date)
+                    Text("Repeats \(draft.frequency == .weekly ? "every week" : "every 2 weeks") from this date: \(draft.rule.summary()).")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 if draft.isTransfer {
                     Picker("From account", selection: $draft.fromAccountId) {
@@ -196,14 +220,16 @@ struct ScheduleEditorSheet: View {
                 Toggle("Active", isOn: $draft.isActive)
             }
             .formStyle(.grouped)
-            Text(draft.isTransfer ? "Moves money between two of your accounts every month. It doesn't count as income or spending, and it shows on the calendar."
-                                     : "Repeats monthly on that day. Days are capped at the 28th so every month has one.")
+            Text(draft.isTransfer ? "Moves money between two of your accounts. It doesn't count as income or spending, and it shows on the calendar."
+                                     : "Days of the month are capped at the 28th so every month has one.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
                 Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
                 Button(editor.existing == nil ? "Schedule" : "Save") {
                     var d = draft; d.amount = parsedAmount ?? 0
+                    if d.frequency == .weekly || d.frequency == .biweekly { d.startDate = d.startDate ?? Date() }
+                    else { d.startDate = nil }
                     d.name = d.name.trimmingCharacters(in: .whitespaces)
                     if d.isTransfer { d.category = Categorizer.transfer; d.isIncome = false }
                     else if d.isIncome { d.category = "Income" }

@@ -31,10 +31,11 @@ enum CashFlowForecastService: Sendable {
         // this function pure and testable without SwiftData concurrency noise.
         // Transfers between your own accounts don't change net worth, so the forecast ignores them.
         let active = bills.filter { $0.isActive && !$0.isTransfer }
+        let rules: [ScheduleRule?] = active.map { $0.rule }
         let plainBills = active.map { (name: $0.name, amount: abs($0.amount), dueDay: $0.dueDay, category: $0.category, isIncome: $0.isIncome) }
         let plainEnvelopes = envelopes.map { (category: $0.category, year: $0.year, month: $0.month, allocated: max(0, $0.allocated)) }
         let plainTx = transactions.filter { $0.category != Categorizer.transfer }.map { (date: $0.date, amount: $0.amount) }
-        return forecastPlain(bills: plainBills, envelopes: plainEnvelopes, transactions: plainTx, options: options)
+        return forecastPlain(bills: plainBills, envelopes: plainEnvelopes, transactions: plainTx, options: options, rules: rules)
     }
 
     /// Testable core — no SwiftData types.
@@ -42,7 +43,8 @@ enum CashFlowForecastService: Sendable {
         bills: [(name: String, amount: Double, dueDay: Int, category: String, isIncome: Bool)],
         envelopes: [(category: String, year: Int, month: Int, allocated: Double)],
         transactions: [(date: Date, amount: Double)],
-        options: ForecastOptions
+        options: ForecastOptions,
+        rules: [ScheduleRule?] = []     // optional repeat pattern per bill (same order); nil = monthly on dueDay
     ) -> [ForecastMonth] {
         let cal = Calendar.current
         let firstMonth = cal.date(from: cal.dateComponents([.year, .month], from: options.from))!
@@ -80,11 +82,20 @@ enum CashFlowForecastService: Sendable {
 
             // Build events for this month (current month: remaining only)
             var events: [ForecastEvent] = []
-            for b in bills {
-                guard let due = cal.date(from: DateComponents(year: y, month: m, day: max(1, min(28, b.dueDay)))) else { continue }
-                if isCurrentMonth, due < cal.startOfDay(for: options.from) { continue }
+            for (i, b) in bills.enumerated() {
                 let signed = b.isIncome ? b.amount : -b.amount
-                events.append(ForecastEvent(date: due, name: b.name, amount: signed, isIncome: b.isIncome, category: b.category))
+                let startOfToday = cal.startOfDay(for: options.from)
+                var dues: [Date] = []
+                if i < rules.count, let rule = rules[i], rule.frequency != .monthly {
+                    let monthEnd = cal.date(byAdding: DateComponents(month: 1, day: -1), to: monthDate) ?? monthDate
+                    dues = rule.dates(from: monthDate, to: monthEnd, calendar: cal)
+                } else if let due = cal.date(from: DateComponents(year: y, month: m, day: max(1, min(28, b.dueDay)))) {
+                    dues = [due]
+                }
+                for due in dues {
+                    if isCurrentMonth, due < startOfToday { continue }
+                    events.append(ForecastEvent(date: due, name: b.name, amount: signed, isIncome: b.isIncome, category: b.category))
+                }
             }
             // Inferred income when user hasn't scheduled any payday yet.
             let inferredIncome: Double

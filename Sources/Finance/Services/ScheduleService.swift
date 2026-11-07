@@ -1,6 +1,102 @@
 import Foundation
 import SwiftData
 
+/// How often a scheduled transaction repeats.
+enum ScheduleFrequency: String, CaseIterable, Identifiable {
+    case monthly, semimonthly, weekly, biweekly
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .monthly: return "Monthly"
+        case .semimonthly: return "Twice a month"
+        case .weekly: return "Every week"
+        case .biweekly: return "Every 2 weeks"
+        }
+    }
+}
+
+/// When a scheduled transaction lands. Monthly and twice-a-month use days of the month
+/// (capped at the 28th); weekly and every-2-weeks repeat from `anchor` (any date it lands on).
+struct ScheduleRule: Equatable {
+    var frequency: ScheduleFrequency = .monthly
+    var dueDay: Int = 1
+    var secondDay: Int = 15
+    var anchor: Date? = nil
+
+    static let fallbackAnchor = Date(timeIntervalSinceReferenceDate: 0)
+
+    private static func clamp(_ d: Int) -> Int { min(max(d, 1), 28) }
+
+    func occurs(on date: Date, calendar: Calendar = .current) -> Bool {
+        switch frequency {
+        case .monthly:
+            return calendar.component(.day, from: date) == Self.clamp(dueDay)
+        case .semimonthly:
+            let d = calendar.component(.day, from: date)
+            return d == Self.clamp(dueDay) || d == Self.clamp(secondDay)
+        case .weekly, .biweekly:
+            let start = calendar.startOfDay(for: anchor ?? Self.fallbackAnchor)
+            let days = calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: date)).day ?? 1
+            return days % (frequency == .weekly ? 7 : 14) == 0
+        }
+    }
+
+    /// Every date from `from` through `to` (start-of-day, inclusive) on which it lands.
+    func dates(from: Date, to: Date, calendar: Calendar = .current) -> [Date] {
+        var out: [Date] = []
+        var day = calendar.startOfDay(for: from)
+        let end = calendar.startOfDay(for: to)
+        var guardCount = 0
+        while day <= end, guardCount < 4000 {
+            if occurs(on: day, calendar: calendar) { out.append(day) }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next; guardCount += 1
+        }
+        return out
+    }
+
+    /// First date on or after `from` it lands on.
+    func nextDate(from: Date, calendar: Calendar = .current) -> Date? {
+        var day = calendar.startOfDay(for: from)
+        for _ in 0..<400 {
+            if occurs(on: day, calendar: calendar) { return day }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { return nil }
+            day = next
+        }
+        return nil
+    }
+
+    /// Average number of times per month, for monthly totals and budgets.
+    var monthlyFactor: Double {
+        switch frequency {
+        case .monthly: return 1
+        case .semimonthly: return 2
+        case .weekly: return 52.0 / 12.0
+        case .biweekly: return 26.0 / 12.0
+        }
+    }
+
+    func summary(calendar: Calendar = .current) -> String {
+        func ordinal(_ n: Int) -> String {
+            let f = NumberFormatter(); f.numberStyle = .ordinal
+            return f.string(from: NSNumber(value: n)) ?? "\(n)"
+        }
+        func weekdayName() -> String {
+            let d = anchor ?? Self.fallbackAnchor
+            let i = calendar.component(.weekday, from: d) - 1
+            return calendar.weekdaySymbols[i]
+        }
+        switch frequency {
+        case .monthly: return "Monthly on the \(ordinal(Self.clamp(dueDay)))"
+        case .semimonthly:
+            let a = Self.clamp(dueDay), b = Self.clamp(secondDay)
+            return "\(ordinal(min(a, b))) & \(ordinal(max(a, b))) of the month"
+        case .weekly: return "Every \(weekdayName())"
+        case .biweekly: return "Every other \(weekdayName())"
+        }
+    }
+}
+
 /// Plain values for creating or editing a scheduled transaction (RecurringBill).
 struct ScheduleDraft: Equatable {
     var name: String
@@ -13,6 +109,14 @@ struct ScheduleDraft: Equatable {
     var isTransfer: Bool = false
     var fromAccountId: String? = nil
     var toAccountId: String? = nil
+    /// Repeat pattern. For weekly / every-2-weeks, `startDate` is a date it lands on.
+    var frequency: ScheduleFrequency = .monthly
+    var secondDay: Int = 15
+    var startDate: Date? = nil
+
+    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: startDate) }
+    /// Valid when the chosen pattern is complete (twice a month needs two different days).
+    var scheduleIsValid: Bool { frequency != .semimonthly || min(max(dueDay, 1), 28) != min(max(secondDay, 1), 28) }
 }
 
 enum ScheduleService {
@@ -49,10 +153,12 @@ enum ScheduleService {
             s.name = d.name; s.amount = abs(d.amount); s.dueDay = d.dueDay
             s.category = category; s.kindRaw = kind; s.isActive = d.isActive
             s.fromAccountId = from; s.toAccountId = to
+            s.frequencyRaw = d.frequency.rawValue; s.secondDay = d.secondDay; s.anchorDate = d.startDate
         } else {
             let s = RecurringBill(name: d.name, amount: abs(d.amount), dueDay: d.dueDay, category: category,
                                   isActive: d.isActive, isIncome: d.isIncome && !d.isTransfer)
             s.kindRaw = kind; s.fromAccountId = from; s.toAccountId = to
+            s.frequencyRaw = d.frequency.rawValue; s.secondDay = d.secondDay; s.anchorDate = d.startDate
             context.insert(s)
         }
         try? context.save()
@@ -64,7 +170,7 @@ enum ScheduleService {
     /// Paused schedules go last.
     @MainActor
     static func orderedByNextDue(_ bills: [RecurringBill], from: Date = Date(), calendar: Calendar = .current) -> [RecurringBill] {
-        func next(_ b: RecurringBill) -> Date { nextDueDate(dueDay: b.dueDay, from: from, calendar: calendar) ?? .distantFuture }
+        func next(_ b: RecurringBill) -> Date { b.rule.nextDate(from: from, calendar: calendar) ?? .distantFuture }
         let active = bills.filter(\.isActive).sorted { (next($0), $0.name) < (next($1), $1.name) }
         let paused = bills.filter { !$0.isActive }.sorted { ($0.dueDay, $0.name) < ($1.dueDay, $1.name) }
         return active + paused
@@ -97,6 +203,12 @@ struct ScheduleItem: Equatable {
     var fromAccountId: String? = nil
     var toAccountId: String? = nil
     var detail: String? = nil      // e.g. "Checking → Visa"
+    var frequency: ScheduleFrequency = .monthly
+    var secondDay: Int = 15
+    var anchor: Date? = nil
+    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: anchor) }
+    /// Average amount per month (signed), counting every repeat.
+    var monthlyAmount: Double { amount * rule.monthlyFactor }
     var isIncome: Bool { !isTransfer && amount > 0 }
 }
 
@@ -186,8 +298,7 @@ enum CashCalendar {
 
     static func events(on date: Date, schedules: [ScheduleItem], cashAccountIds: Set<String>? = nil,
                        calendar: Calendar = .current) -> [ForecastEvent] {
-        let day = calendar.component(.day, from: date)
-        return schedules.filter { clampedDay($0.dueDay) == day }
+        return schedules.filter { $0.rule.occurs(on: date, calendar: calendar) }
             .sorted { $0.name < $1.name }
             .map { ForecastEvent(date: date, name: $0.name,
                                  amount: balanceEffect(of: $0, cashAccountIds: cashAccountIds),
@@ -217,9 +328,17 @@ extension RecurringBill {
             detail = "\(accountNames[f] ?? "?") → \(accountNames[t] ?? "?")"
         }
         return ScheduleItem(name: name, amount: signedAmount, dueDay: dueDay, category: category,
-                            isTransfer: isTransfer, fromAccountId: fromAccountId, toAccountId: toAccountId, detail: detail)
+                            isTransfer: isTransfer, fromAccountId: fromAccountId, toAccountId: toAccountId, detail: detail,
+                            frequency: rule.frequency, secondDay: secondDay, anchor: anchorDate)
     }
     var item: ScheduleItem { item() }
+
+    var rule: ScheduleRule {
+        ScheduleRule(frequency: ScheduleFrequency(rawValue: frequencyRaw) ?? .monthly,
+                     dueDay: dueDay, secondDay: secondDay, anchor: anchorDate)
+    }
+    /// Average amount per month in absolute terms, counting every repeat.
+    var monthlySize: Double { abs(amount) * rule.monthlyFactor }
 }
 
 // MARK: - Scheduled transactions feed the budget
@@ -228,11 +347,11 @@ enum BudgetSync {
     /// Monthly scheduled total per expense category (active bills only).
     static func scheduledExpenses(_ items: [ScheduleItem]) -> [String: Double] {
         var out: [String: Double] = [:]
-        for i in items where !i.isIncome && !i.isTransfer { out[i.category, default: 0] += abs(i.amount) }
+        for i in items where !i.isIncome && !i.isTransfer { out[i.category, default: 0] += abs(i.monthlyAmount) }
         return out
     }
     static func scheduledIncome(_ items: [ScheduleItem]) -> Double {
-        items.filter(\.isIncome).reduce(0) { $0 + $1.amount }
+        items.filter(\.isIncome).reduce(0) { $0 + $1.monthlyAmount }
     }
 
     /// Make sure every category with scheduled bills has an envelope at least as big as

@@ -99,6 +99,12 @@ final class RecurringBill {
     /// For transfers: OFX accountIds the money leaves and arrives in. Nil otherwise.
     var fromAccountId: String? = nil
     var toAccountId: String? = nil
+    /// "monthly" | "semimonthly" | "weekly" | "biweekly" (see ScheduleFrequency). Existing rows are monthly.
+    var frequencyRaw: String = "monthly"
+    /// Second day of the month for twice-a-month schedules.
+    var secondDay: Int = 15
+    /// A date a weekly / every-2-weeks schedule lands on; the repeat counts from it.
+    var anchorDate: Date? = nil
 
     init(id: UUID = UUID(), name: String, amount: Double, dueDay: Int, category: String, isActive: Bool = true, isIncome: Bool = false) {
         self.id = id; self.name = name; self.amount = amount; self.dueDay = dueDay

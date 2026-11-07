@@ -257,13 +257,10 @@ final class CalendarService {
         try clearSynced()
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
+        let end = calendar.date(byAdding: .month, value: months, to: today) ?? today
         var created = 0
-        for offset in 0..<months {
-            guard let monthDate = calendar.date(byAdding: .month, value: offset, to: today) else { continue }
-            let monthStart = calendar.dateInterval(of: .month, for: monthDate)?.start ?? monthDate
-            for bill in bills where bill.isActive {
-                guard let due = calendar.date(byAdding: .day, value: CashCalendar.clampedDay(bill.dueDay) - 1, to: monthStart),
-                      due >= today else { continue }
+        for bill in bills where bill.isActive {
+            for due in bill.rule.dates(from: today, to: end, calendar: calendar) {
                 let ev = EKEvent(eventStore: store)
                 let amount = currency.string(from: NSNumber(value: abs(bill.amount))) ?? String(format: "$%.2f", abs(bill.amount))
                 let route = bill.item(accountNames: accountNames).detail

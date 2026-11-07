@@ -704,3 +704,87 @@ final class ScheduleOrderingTests: XCTestCase {
         XCTAssertEqual(ordered.map(\.name), ["Gym", "Water", "Phone", "Rent", "Old"])
     }
 }
+
+final class ScheduleRuleTests: XCTestCase {
+    private var cal: Calendar = {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c
+    }()
+    private func d(_ m: Int, _ day: Int, _ y: Int = 2026) -> Date { cal.date(from: DateComponents(year: y, month: m, day: day))! }
+
+    func testMonthlyAndTwiceMonthly() {
+        let monthly = ScheduleRule(frequency: .monthly, dueDay: 31)           // clamps to 28
+        XCTAssertTrue(monthly.occurs(on: d(2, 28), calendar: cal)); XCTAssertFalse(monthly.occurs(on: d(1, 31), calendar: cal))
+        let twice = ScheduleRule(frequency: .semimonthly, dueDay: 1, secondDay: 15)
+        XCTAssertEqual(twice.dates(from: d(11, 1), to: d(11, 30), calendar: cal), [d(11, 1), d(11, 15)])
+        XCTAssertEqual(twice.summary(calendar: cal), "1st & 15th of the month")
+    }
+
+    func testWeeklyFromAnchor() {
+        let friday = d(11, 6)                                                  // Nov 6 2026 is a Friday
+        let weekly = ScheduleRule(frequency: .weekly, anchor: friday)
+        XCTAssertEqual(weekly.dates(from: d(11, 1), to: d(11, 30), calendar: cal), [d(11, 6), d(11, 13), d(11, 20), d(11, 27)])
+        XCTAssertTrue(weekly.occurs(on: d(10, 30), calendar: cal))             // before the anchor too
+        XCTAssertEqual(weekly.summary(calendar: cal), "Every Friday")
+        XCTAssertEqual(weekly.nextDate(from: d(11, 7), calendar: cal), d(11, 13))
+    }
+
+    func testBiweeklyAlternates() {
+        let r = ScheduleRule(frequency: .biweekly, anchor: d(11, 6))
+        XCTAssertEqual(r.dates(from: d(11, 1), to: d(12, 31), calendar: cal),
+                       [d(11, 6), d(11, 20), d(12, 4), d(12, 18)])
+        XCTAssertEqual(r.dates(from: d(10, 1), to: d(10, 31), calendar: cal), [d(10, 9), d(10, 23)])
+        XCTAssertEqual(r.summary(calendar: cal), "Every other Friday")
+    }
+
+    func testMonthlyFactorsAndBudget() {
+        XCTAssertEqual(ScheduleRule(frequency: .semimonthly).monthlyFactor, 2)
+        XCTAssertEqual(ScheduleRule(frequency: .weekly).monthlyFactor, 52.0 / 12.0, accuracy: 0.0001)
+        let weeklyGroceries = ScheduleItem(name: "Groceries", amount: -120, dueDay: 1, category: "Groceries",
+                                           frequency: .weekly, anchor: d(11, 6))
+        let semiPay = ScheduleItem(name: "Pay", amount: 1500, dueDay: 1, category: "Income", frequency: .semimonthly)
+        XCTAssertEqual(BudgetSync.scheduledExpenses([weeklyGroceries])["Groceries"]!, 120 * 52.0 / 12.0, accuracy: 0.01)
+        XCTAssertEqual(BudgetSync.scheduledIncome([semiPay]), 3000)
+    }
+
+    func testCalendarShowsWeeklyItems() {
+        let weekly = ScheduleItem(name: "Pay", amount: 500, dueDay: 1, category: "Income", frequency: .weekly, anchor: d(11, 6))
+        let days = CashCalendar.grid(month: d(11, 1), schedules: [weekly], balanceToday: 0, today: d(11, 1), calendar: cal)
+        XCTAssertEqual(days.filter { $0.inMonth && !$0.events.isEmpty }.map { cal.component(.day, from: $0.date) }, [6, 13, 20, 27])
+        XCTAssertEqual(days.last { $0.inMonth }?.closing, 2000)
+    }
+
+    func testForecastCountsEveryPaydayInTheMonth() {
+        // Local calendar, like the forecast itself.
+        let local = Calendar.current
+        let nov1 = local.date(from: DateComponents(year: 2026, month: 11, day: 1))!
+        let anchor = local.date(from: DateComponents(year: 2026, month: 11, day: 6))!
+        let months = CashFlowForecastService.forecastPlain(
+            bills: [(name: "Pay", amount: 100, dueDay: 1, category: "Income", isIncome: true)],
+            envelopes: [], transactions: [],
+            options: ForecastOptions(months: 1, includeEnvelopes: false, fallbackAverageVariable: false,
+                                     inferIncomeFromHistory: false, startingBalance: 0, from: nov1),
+            rules: [ScheduleRule(frequency: .weekly, anchor: anchor)])
+        XCTAssertEqual(months.first?.scheduledIncome, 400)
+        XCTAssertEqual(months.first?.events.count, 4)
+    }
+}
+
+@MainActor
+final class SchedulePersistenceTests: XCTestCase {
+    func testSaveStoresFrequencyAndNextDateUsesIt() throws {
+        let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        let context = ModelContext(container)
+        let anchor = Calendar.current.date(byAdding: .day, value: -3, to: Date())!
+        var draft = ScheduleDraft(name: "Paycheck", amount: 1000, dueDay: 1, category: "Income", isIncome: true)
+        draft.frequency = .biweekly; draft.startDate = anchor
+        ScheduleService.save(draft, existing: nil, in: context)
+        let bill = try XCTUnwrap(try context.fetch(FetchDescriptor<RecurringBill>()).first)
+        XCTAssertEqual(bill.frequencyRaw, "biweekly")
+        XCTAssertEqual(bill.rule.frequency, .biweekly)
+        let next = try XCTUnwrap(bill.rule.nextDate(from: Date()))
+        XCTAssertEqual(Calendar.current.dateComponents([.day], from: anchor, to: next).day! % 14, 0)
+        XCTAssertEqual(bill.monthlySize, 1000 * 26.0 / 12.0, accuracy: 0.01)
+    }
+}

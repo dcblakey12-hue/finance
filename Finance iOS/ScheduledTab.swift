@@ -23,11 +23,11 @@ struct ScheduledTab: View {
                                 Text(s.name).foregroundStyle(s.isActive ? Color.primary : .secondary)
                                 Text(s.isTransfer ? (s.item(accountNames: names).detail ?? "Transfer") : s.category)
                                     .font(.caption).foregroundStyle(.secondary)
-                                if s.isActive, let d = ScheduleService.nextDueDate(dueDay: s.dueDay, from: Date()) {
-                                    Text("Next: \(d.formatted(.dateTime.month(.abbreviated).day().year()))")
+                                if s.isActive, let d = s.rule.nextDate(from: Date()) {
+                                    Text("\(s.rule.summary()) • next \(d.formatted(.dateTime.month(.abbreviated).day().year()))")
                                         .font(.caption2).foregroundStyle(.secondary)
                                 } else {
-                                    Text("Paused • day \(s.dueDay)").font(.caption2).foregroundStyle(.secondary)
+                                    Text("Paused • \(s.rule.summary())").font(.caption2).foregroundStyle(.secondary)
                                 }
                             }
                             Spacer()
@@ -76,7 +76,11 @@ struct ScheduleForm: View {
     private var amount: Double { Double(amountText.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: "")) ?? 0 }
     private var canSave: Bool {
         !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && amount > 0 &&
-        (!draft.isTransfer || (draft.fromAccountId != nil && draft.toAccountId != nil && draft.fromAccountId != draft.toAccountId))
+        (!draft.isTransfer || (draft.fromAccountId != nil && draft.toAccountId != nil && draft.fromAccountId != draft.toAccountId)) &&
+        draft.scheduleIsValid
+    }
+    private var startDateBinding: Binding<Date> {
+        Binding(get: { draft.startDate ?? Date() }, set: { draft.startDate = $0 })
     }
 
     var body: some View {
@@ -87,8 +91,24 @@ struct ScheduleForm: View {
                 }.pickerStyle(.segmented)
                 TextField("Name", text: $draft.name)
                 TextField("Amount", text: $amountText).keyboardType(.decimalPad)
-                Picker("Day of month", selection: $draft.dueDay) {
-                    ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                Picker("Repeats", selection: $draft.frequency) {
+                    ForEach(ScheduleFrequency.allCases) { Text($0.label).tag($0) }
+                }
+                switch draft.frequency {
+                case .monthly:
+                    Picker("Day of month", selection: $draft.dueDay) {
+                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                    }
+                case .semimonthly:
+                    Picker("First day", selection: $draft.dueDay) {
+                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                    }
+                    Picker("Second day", selection: $draft.secondDay) {
+                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                    }
+                case .weekly, .biweekly:
+                    DatePicker("A date it lands on", selection: startDateBinding, displayedComponents: .date)
+                    Text(draft.rule.summary()).font(.caption).foregroundStyle(.secondary)
                 }
                 if draft.isTransfer {
                     Picker("From", selection: $draft.fromAccountId) {
@@ -114,6 +134,8 @@ struct ScheduleForm: View {
                     Button("Save") {
                         var d = draft
                         d.amount = amount
+                        if d.frequency == .weekly || d.frequency == .biweekly { d.startDate = d.startDate ?? Date() }
+                        else { d.startDate = nil }
                         d.name = d.name.trimmingCharacters(in: .whitespaces)
                         if d.isTransfer { d.isIncome = false }
                         else if d.category == "Income" || d.category == Categorizer.transfer { d.category = "Other" }
@@ -127,7 +149,8 @@ struct ScheduleForm: View {
             if let s = existing {
                 draft = ScheduleDraft(name: s.name, amount: abs(s.amount), dueDay: s.dueDay, category: s.category,
                                       isIncome: s.isIncome, isActive: s.isActive, isTransfer: s.isTransfer,
-                                      fromAccountId: s.fromAccountId, toAccountId: s.toAccountId)
+                                      fromAccountId: s.fromAccountId, toAccountId: s.toAccountId,
+                                      frequency: s.rule.frequency, secondDay: s.secondDay, startDate: s.anchorDate)
                 amountText = String(format: "%.2f", abs(s.amount))
             }
         }
