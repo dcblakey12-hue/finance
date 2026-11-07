@@ -276,7 +276,7 @@ enum TransferDetector {
     /// Pairs of transactions that look like one transfer: equal and opposite
     /// amounts in *different* accounts, dated within `maxDays` of each other.
     /// Each transaction is used at most once; the closest date wins.
-    static func pairs(_ txs: [Candidate], maxDays: Int = 3, calendar: Calendar = .current) -> [(UUID, UUID)] {
+    static func pairs(_ txs: [Candidate], maxDays: Int = 5, calendar: Calendar = .current) -> [(UUID, UUID)] {
         let outs = txs.filter { $0.amount < 0 }.sorted { $0.date < $1.date }
         let ins = txs.filter { $0.amount > 0 }
         var used = Set<UUID>()
@@ -298,26 +298,38 @@ enum TransferDetector {
     }
 }
 
+struct TransferScan {
+    var marked = 0       // transactions newly marked as Transfer
+    var checked = 0      // uncategorized transactions looked at
+    var lookalikes = 0   // equal-and-opposite pairs skipped (already categorized, or 6-10 days apart)
+}
+
 @MainActor
 extension CategorizationService {
     /// Mark matching opposite transactions across accounts as Transfers.
     /// Only looks at Uncategorized and already-Transfer transactions, so categories
-    /// you chose yourself are never overwritten. Returns how many were newly marked.
+    /// you chose yourself are never overwritten.
     @discardableResult
-    static func markTransfers(in context: ModelContext) -> Int {
+    static func markTransfers(in context: ModelContext) -> TransferScan {
         let all = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
+        func candidate(_ t: TransactionRecord) -> TransferDetector.Candidate {
+            .init(id: t.id, accountId: t.accountId, amount: t.amount, date: t.date)
+        }
         let pool = all.filter { $0.category == Categorizer.uncategorized || $0.category == Categorizer.transfer }
         let byId = Dictionary(uniqueKeysWithValues: pool.map { ($0.id, $0) })
-        let pairs = TransferDetector.pairs(pool.map { .init(id: $0.id, accountId: $0.accountId, amount: $0.amount, date: $0.date) })
-        var changed = 0
+        let pairs = TransferDetector.pairs(pool.map(candidate))
+        var scan = TransferScan(checked: pool.count)
         for (a, b) in pairs {
             for id in [a, b] {
                 if let tx = byId[id], tx.category != Categorizer.transfer {
-                    tx.category = Categorizer.transfer; changed += 1
+                    tx.category = Categorizer.transfer; scan.marked += 1
                 }
             }
         }
+        // How many lookalikes did we skip? Compare against a looser search over everything.
+        let loose = TransferDetector.pairs(all.map(candidate), maxDays: 10).count
+        scan.lookalikes = max(0, loose - pairs.count)
         try? context.save()
-        return changed
+        return scan
     }
 }

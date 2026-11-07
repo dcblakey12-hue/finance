@@ -79,10 +79,16 @@ struct TransactionsView: View {
                 }
                 .help("Apply learned merchant rules and built-in keywords to uncategorized transactions")
                 Button("Find Transfers") {
-                    let n = CategorizationService.markTransfers(in: context)
-                    status = n == 0 ? "No matching transfers found." : "Marked \(n) transaction\(n == 1 ? "" : "s") as transfers between your accounts."
+                    let r = CategorizationService.markTransfers(in: context)
+                    if r.marked > 0 {
+                        status = "Marked \(r.marked) transaction\(r.marked == 1 ? "" : "s") as transfers between your accounts."
+                    } else if r.lookalikes > 0 {
+                        status = "No new transfers. \(r.lookalikes) equal-and-opposite pair\(r.lookalikes == 1 ? "" : "s") already have a category or are more than 5 days apart. Set one side to Transfer yourself and the app will remember that merchant."
+                    } else {
+                        status = "No transfers found among \(r.checked) uncategorized transactions. A transfer needs equal and opposite amounts in two different accounts within 5 days."
+                    }
                 }
-                .help("Match equal and opposite amounts in different accounts within 3 days and mark them as Transfer")
+                .help("Match equal and opposite amounts in different accounts within 5 days and mark them as Transfer")
             }.padding()
             if let status {
                 Text(status).font(.caption).foregroundStyle(.secondary)

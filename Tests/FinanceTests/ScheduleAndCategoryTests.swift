@@ -225,6 +225,11 @@ final class TransferTests: XCTestCase {
         XCTAssertTrue(TransferDetector.pairs([c("a", -50, d(11, 3)), c("b", 51, d(11, 3))], calendar: cal).isEmpty)
     }
 
+    func testDefaultWindowIsFiveDays() {
+        XCTAssertEqual(TransferDetector.pairs([c("a", -75, d(11, 3)), c("b", 75, d(11, 8))], calendar: cal).count, 1)
+        XCTAssertTrue(TransferDetector.pairs([c("a", -75, d(11, 3)), c("b", 75, d(11, 9))], calendar: cal).isEmpty)
+    }
+
     func testEachTransactionUsedOnceClosestDateWins() {
         let out = c("a", -100, d(11, 5))
         let near = c("b", 100, d(11, 5)), far = c("b", 100, d(11, 7))
