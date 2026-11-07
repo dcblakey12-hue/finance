@@ -35,13 +35,16 @@ final class OFXParser: Sendable {
     func parse(string: String) throws -> ParsedOFXFile {
         let root = buildTree(from: string)
         // OFX: outer <STMTRS> wraps inner per-account <STMTRS>. Only take nodes whose immediate child is BANKACCTFROM to avoid double-counting.
-        let allStmts = findAll(root, name: "STMTRS")
+        // Bank statements are STMTRS; credit card statements are CCSTMTRS.
+        let allStmts = findAll(root, name: "STMTRS") + findAll(root, name: "CCSTMTRS")
         let stmtNodes = allStmts.filter { $0.children.contains(where: { $0.tag == "BANKACCTFROM" || $0.tag == "CCACCTFROM" }) }
         let effectiveStmts = stmtNodes.isEmpty ? allStmts : stmtNodes
         var allTransactions: [OFXTransaction] = []
         var bankId = "UNKNOWN", accountId = "", accountName = "", balance: Double?
+        var isCreditCard = false
         for stmt in effectiveStmts {
-            let from = findFirst(stmt, name: "BANKACCTFROM") ?? stmt
+            let from = findFirst(stmt, name: "BANKACCTFROM") ?? findFirst(stmt, name: "CCACCTFROM") ?? stmt
+            if stmt.tag == "CCSTMTRS" { isCreditCard = true }
             if let b = value(of: "BANKID", under: from) { bankId = b }
             if let a = value(of: "ACCTID", under: from) { accountId = a }
             if let n = value(of: "BRANCHID", under: from) { accountName = n }
@@ -62,7 +65,12 @@ final class OFXParser: Sendable {
         var seen = Set<String>()
         let deduped = allTransactions.filter { seen.insert("\($0.accountId)|\($0.fitid)").inserted }
         if accountName.isEmpty { accountName = "Account \(accountId)" }
-        return ParsedOFXFile(bankId: bankId, accountId: accountId, accountName: accountName, balance: balance, transactions: deduped)
+        let fi = findFirst(root, name: "FI")
+        let org = fi.flatMap { value(of: "ORG", under: $0) }.flatMap { $0.isEmpty ? nil : $0 }
+        let fid = fi.flatMap { value(of: "FID", under: $0) }.flatMap { $0.isEmpty ? nil : $0 }
+        return ParsedOFXFile(bankId: bankId, accountId: accountId, accountName: accountName, balance: balance,
+                             transactions: deduped, institutionOrg: org, institutionFid: fid,
+                             isCreditCard: isCreditCard)
     }
 
     // MARK: - Tree building

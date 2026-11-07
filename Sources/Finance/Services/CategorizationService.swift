@@ -58,11 +58,16 @@ enum MerchantNormalizer {
 
 enum Categorizer {
     static let uncategorized = "Uncategorized"
+    /// Built-in category for money moved between your own accounts (credit card
+    /// payments, savings transfers). Excluded from spending, income and forecasts.
+    static let transfer = "Transfer"
 
     /// Built-in keyword hints, checked only when no learned rule matches.
     /// A keyword matches at the start of a word, so "RENT" matches "RENT PMT"
     /// but not "CURRENT" or "PARENTS".
     static let builtInKeywords: [(keyword: String, category: String)] = [
+        // Transfers between your own accounts (first so they win over merchant words)
+        ("PAYMENT THANK YOU", "Transfer"), ("CREDIT CARD PAYMENT", "Transfer"), ("TRANSFER", "Transfer"), ("XFER", "Transfer"),
         // Groceries
         ("WHOLE FOODS", "Groceries"), ("TRADER JOE", "Groceries"), ("KROGER", "Groceries"), ("SAFEWAY", "Groceries"),
         ("PUBLIX", "Groceries"), ("ALDI", "Groceries"), ("WEGMANS", "Groceries"), ("COSTCO", "Groceries"),
@@ -89,12 +94,16 @@ enum Categorizer {
     ]
 
     /// Category for a transaction, or nil if nothing matches.
-    /// Learned rules (by merchant key) win over built-in keywords.
-    static func category(forName name: String, rules: [String: String]) -> String? {
+    /// Learned rules (by merchant key) win over built-in keywords. When `allowed`
+    /// (lowercased category names) is given, a built-in keyword whose category
+    /// the user has deleted or renamed away is ignored instead of resurrecting it.
+    static func category(forName name: String, rules: [String: String], allowed: Set<String>? = nil) -> String? {
         let key = MerchantNormalizer.key(for: name)
         if !key.isEmpty, let cat = rules[key] { return cat }
         let haystack = " " + wordSpaced(name) + " "
-        return builtInKeywords.first { haystack.contains(" " + $0.keyword) }?.category
+        guard let hit = builtInKeywords.first(where: { haystack.contains(" " + $0.keyword) }) else { return nil }
+        if let allowed, !allowed.contains(hit.category.lowercased()) { return nil }
+        return hit.category
     }
 
     /// Uppercase, with punctuation other than & ' - turned into spaces.
@@ -152,16 +161,233 @@ enum CategorizationService {
     @discardableResult
     static func categorizeUncategorized(in context: ModelContext) -> Int {
         let rules = ruleMap(in: context)
+        let allowed = CategoryService.allowedBuiltIns(in: context)
         let uncategorized = Categorizer.uncategorized
         let txs = (try? context.fetch(FetchDescriptor<TransactionRecord>(
             predicate: #Predicate { $0.category == uncategorized }))) ?? []
         var updated = 0
         for tx in txs {
-            if let cat = Categorizer.category(forName: tx.name, rules: rules) {
+            if let cat = Categorizer.category(forName: tx.name, rules: rules, allowed: allowed) {
                 tx.category = cat; updated += 1
             }
         }
         try? context.save()
         return updated
+    }
+}
+
+// MARK: - Category management (rename / delete / seed)
+
+@MainActor
+enum CategoryService {
+    static let seededKey = "finance.categories.seeded.v1"
+
+    /// First launch: copy the built-in categories into the editable list so
+    /// they can be renamed or deleted like any other.
+    static func seedIfNeeded(in context: ModelContext, defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: seededKey) else { return }
+        let existing = Set(((try? context.fetch(FetchDescriptor<CustomCategory>())) ?? []).map { $0.name.lowercased() })
+        for name in BudgetService.defaultCategories where !existing.contains(name.lowercased()) {
+            context.insert(CustomCategory(name: name))
+        }
+        if (try? context.save()) != nil { defaults.set(true, forKey: seededKey) }
+    }
+
+    /// Lowercased names built-in keyword guesses may use: the user's current
+    /// categories plus Income and Transfer. Nil (no filtering) before categories are seeded.
+    static func allowedBuiltIns(in context: ModelContext) -> Set<String>? {
+        let names = ((try? context.fetch(FetchDescriptor<CustomCategory>())) ?? []).map { $0.name.lowercased() }
+        return names.isEmpty ? nil : Set(names + ["income", "transfer"])
+    }
+
+    /// Rename a category everywhere it's used: transactions, scheduled items,
+    /// budget envelopes and merchant rules. Validate with `BudgetService.validatedRename` first.
+    static func rename(_ category: CustomCategory, to newName: String, in context: ModelContext) {
+        let old = category.name
+        guard old != newName else { return }
+        fetch(TransactionRecord.self, category: old, in: context).forEach { $0.category = newName }
+        fetch(RecurringBill.self, category: old, in: context).forEach { $0.category = newName }
+        fetch(Envelope.self, category: old, in: context).forEach { $0.category = newName }
+        fetch(CategoryRule.self, category: old, in: context).forEach { $0.category = newName }
+        category.name = newName
+        try? context.save()
+    }
+
+    /// Delete a category. Its transactions move to `moveTo` (another category's
+    /// name) or become Uncategorized when nil. Scheduled items move there too (or to Other);
+    /// budget envelopes are added into the target's envelope for the same month, or dropped;
+    /// merchant rules follow the transactions or are forgotten.
+    static func delete(_ category: CustomCategory, moveTo target: String?, in context: ModelContext) {
+        let name = category.name
+        let dest: String? = (target == nil || target == Categorizer.uncategorized || target == name) ? nil : target
+
+        fetch(TransactionRecord.self, category: name, in: context).forEach { $0.category = dest ?? Categorizer.uncategorized }
+        let billFallback = name == "Other" ? Categorizer.uncategorized : "Other"
+        fetch(RecurringBill.self, category: name, in: context).forEach { $0.category = dest ?? billFallback }
+
+        let envelopes = fetch(Envelope.self, category: name, in: context)
+        if let dest {
+            let destEnvelopes = fetch(Envelope.self, category: dest, in: context)
+            for env in envelopes {
+                if let match = destEnvelopes.first(where: { $0.year == env.year && $0.month == env.month }) {
+                    match.allocated += env.allocated
+                    context.delete(env)
+                } else {
+                    env.category = dest
+                }
+            }
+        } else {
+            envelopes.forEach { context.delete($0) }
+        }
+
+        let rules = fetch(CategoryRule.self, category: name, in: context)
+        if let dest { rules.forEach { $0.category = dest } } else { rules.forEach { context.delete($0) } }
+
+        context.delete(category)
+        try? context.save()
+    }
+
+    private static func fetch<T: PersistentModel>(_ type: T.Type, category: String, in context: ModelContext) -> [T] {
+        let all = (try? context.fetch(FetchDescriptor<T>())) ?? []
+        return all.filter { categoryName(of: $0) == category }
+    }
+
+    private static func categoryName(of model: any PersistentModel) -> String? {
+        switch model {
+        case let m as TransactionRecord: return m.category
+        case let m as RecurringBill: return m.category
+        case let m as Envelope: return m.category
+        case let m as CategoryRule: return m.category
+        default: return nil
+        }
+    }
+}
+
+// MARK: - Transfer detection
+
+enum TransferDetector {
+    struct Candidate {
+        let id: UUID
+        let accountId: String
+        let amount: Double
+        let date: Date
+    }
+
+    /// Pairs of transactions that look like one transfer: equal and opposite
+    /// amounts in *different* accounts, dated within `maxDays` of each other.
+    /// Each transaction is used at most once; the closest date wins.
+    static func pairs(_ txs: [Candidate], maxDays: Int = 5, calendar: Calendar = .current) -> [(UUID, UUID)] {
+        let outs = txs.filter { $0.amount < 0 }.sorted { $0.date < $1.date }
+        let ins = txs.filter { $0.amount > 0 }
+        var used = Set<UUID>()
+        var result: [(UUID, UUID)] = []
+        for out in outs {
+            var best: Candidate?
+            var bestGap = Int.max
+            for inn in ins where !used.contains(inn.id) && inn.accountId != out.accountId && abs(inn.amount + out.amount) < 0.005 {
+                let days = abs(calendar.dateComponents([.day], from: calendar.startOfDay(for: out.date),
+                                                       to: calendar.startOfDay(for: inn.date)).day ?? Int.max)
+                if days <= maxDays && days < bestGap { best = inn; bestGap = days }
+            }
+            if let best {
+                used.insert(best.id); used.insert(out.id)
+                result.append((out.id, best.id))
+            }
+        }
+        return result
+    }
+}
+
+extension TransferDetector {
+    /// Possible other sides for `tx`, best first: different account, opposite sign,
+    /// within `maxDays`, ranked by how close the amounts and dates are. Used for manual linking.
+    static func candidates(for tx: Candidate, among others: [Candidate], maxDays: Int = 10, limit: Int = 15,
+                           calendar: Calendar = .current) -> [UUID] {
+        let source = calendar.startOfDay(for: tx.date)
+        let ranked: [(id: UUID, amountGap: Double, dayGap: Int)] = others.compactMap { o in
+            guard o.id != tx.id, o.accountId != tx.accountId, (o.amount > 0) != (tx.amount > 0), o.amount != 0 else { return nil }
+            let days = abs(calendar.dateComponents([.day], from: source, to: calendar.startOfDay(for: o.date)).day ?? Int.max)
+            guard days <= maxDays else { return nil }
+            return (o.id, abs(abs(o.amount) - abs(tx.amount)), days)
+        }
+        return ranked
+            .sorted { ($0.amountGap, $0.dayGap) < ($1.amountGap, $1.dayGap) }
+            .prefix(limit).map(\.id)
+    }
+}
+
+struct TransferScan {
+    var linked = 0       // transfers linked (pairs)
+    var marked = 0       // transactions newly marked as Transfer
+    var checked = 0      // uncategorized transactions looked at
+    var lookalikes = 0   // equal-and-opposite pairs skipped (already categorized, or 6-10 days apart)
+}
+
+@MainActor
+extension CategorizationService {
+    /// Find matching opposite transactions across accounts, mark both as Transfer and
+    /// link them to each other. Only looks at unlinked Uncategorized/Transfer transactions,
+    /// so categories you chose yourself are never overwritten.
+    @discardableResult
+    static func markTransfers(in context: ModelContext) -> TransferScan {
+        let all = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
+        func candidate(_ t: TransactionRecord) -> TransferDetector.Candidate {
+            .init(id: t.id, accountId: t.accountId, amount: t.amount, date: t.date)
+        }
+        let unlinked = all.filter { $0.transferPeerId == nil }
+        let pool = unlinked.filter { $0.category == Categorizer.uncategorized || $0.category == Categorizer.transfer }
+        let byId = Dictionary(uniqueKeysWithValues: pool.map { ($0.id, $0) })
+        let pairs = TransferDetector.pairs(pool.map(candidate))
+        var scan = TransferScan(checked: pool.count)
+        for (a, b) in pairs {
+            guard let ta = byId[a], let tb = byId[b] else { continue }
+            for tx in [ta, tb] where tx.category != Categorizer.transfer {
+                tx.category = Categorizer.transfer; scan.marked += 1
+            }
+            ta.transferPeerId = tb.id; tb.transferPeerId = ta.id
+            scan.linked += 1
+        }
+        // How many lookalikes did we skip? Compare against a looser search over everything unlinked.
+        let loose = TransferDetector.pairs(unlinked.map(candidate), maxDays: 10).count
+        scan.lookalikes = max(0, loose - pairs.count)
+        try? context.save()
+        return scan
+    }
+}
+
+// MARK: - Linking the two sides of a transfer
+
+@MainActor
+enum TransferLinkService {
+    static func peer(of tx: TransactionRecord, in all: [TransactionRecord]) -> TransactionRecord? {
+        guard let id = tx.transferPeerId else { return nil }
+        return all.first { $0.id == id }
+    }
+
+    /// Remove `tx`'s link (and the matching link on its peer) without touching categories.
+    static func detach(_ tx: TransactionRecord, among all: [TransactionRecord]) {
+        peer(of: tx, in: all)?.transferPeerId = nil
+        tx.transferPeerId = nil
+    }
+
+    /// Link two transactions in different accounts as the two sides of one transfer
+    /// and mark both as Transfer. Any previous links either one had are removed first.
+    static func link(_ a: TransactionRecord, _ b: TransactionRecord, in context: ModelContext) {
+        guard a.id != b.id, a.accountId != b.accountId else { return }
+        let all = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
+        detach(a, among: all); detach(b, among: all)
+        a.transferPeerId = b.id; b.transferPeerId = a.id
+        a.category = Categorizer.transfer; b.category = Categorizer.transfer
+        try? context.save()
+    }
+
+    /// Unlink a transfer: both sides go back to being normal, uncategorized transactions.
+    static func unlink(_ tx: TransactionRecord, in context: ModelContext) {
+        let all = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
+        let other = peer(of: tx, in: all)
+        detach(tx, among: all)
+        tx.category = Categorizer.uncategorized
+        other?.category = Categorizer.uncategorized
+        try? context.save()
     }
 }

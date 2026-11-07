@@ -1,7 +1,27 @@
 import Foundation
 import SwiftData
 
-enum AccountType: String, Codable, CaseIterable { case checking, savings, creditCard, investment, cash }
+enum AccountType: String, Codable, CaseIterable { case checking, savings, creditCard, mortgage, investment, cash }
+
+/// Accounts of one type, for sectioned lists.
+struct AccountGroup<Item> {
+    let type: AccountType
+    let items: [Item]
+}
+
+extension AccountType {
+    /// Order sections appear in: checking first, then savings, cards, mortgage, investments, cash.
+    static let displayOrder: [AccountType] = [.checking, .savings, .creditCard, .mortgage, .investment, .cash]
+
+    /// Group items by account type in `displayOrder`, skipping types with no accounts.
+    /// Items keep their incoming order within each group.
+    static func grouped<Item>(_ items: [Item], by type: (Item) -> AccountType) -> [AccountGroup<Item>] {
+        displayOrder.compactMap { t in
+            let matching = items.filter { type($0) == t }
+            return matching.isEmpty ? nil : AccountGroup(type: t, items: matching)
+        }
+    }
+}
 enum TransactionType: String, Codable { case debit, credit }
 
 @Model
@@ -32,6 +52,9 @@ final class TransactionRecord {
     var typeRaw: String
     var category: String
     var memo: String
+    /// The other side of a transfer between two of your accounts (e.g. the card payment
+    /// that matches a bank debit). Nil when not linked.
+    var transferPeerId: UUID? = nil
 
     init(id: UUID = UUID(), fitid: String, accountId: String, accountName: String, date: Date, name: String, amount: Double, type: TransactionType, category: String = "Uncategorized", memo: String = "") {
         self.id = id; self.fitid = fitid; self.accountId = accountId; self.accountName = accountName
@@ -114,6 +137,12 @@ struct ParsedOFXFile {
     var accountName: String
     var balance: Double?
     var transactions: [OFXTransaction]
+    /// Financial institution from the file's <FI> block, when present.
+    /// These identify the bank (e.g. for looking up its OFX server) but are not a server URL.
+    var institutionOrg: String? = nil
+    var institutionFid: String? = nil
+    /// True when the statement was a credit card statement (CCSTMTRS).
+    var isCreditCard: Bool = false
 }
 
 struct MonthlySummary {
@@ -178,5 +207,18 @@ struct ForecastOptions {
         self.fallbackAverageVariable = fallbackAverageVariable
         self.inferIncomeFromHistory = inferIncomeFromHistory
         self.startingBalance = startingBalance; self.from = from
+    }
+}
+
+// MARK: - User-defined categories
+
+/// A category the user added on top of `BudgetService.defaultCategories`.
+@Model
+final class CustomCategory {
+    @Attribute(.unique) var name: String
+    var createdAt: Date
+
+    init(name: String, createdAt: Date = Date()) {
+        self.name = name; self.createdAt = createdAt
     }
 }

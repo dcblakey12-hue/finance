@@ -26,6 +26,10 @@
 	<string>public.app-category.finance</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Finance adds your scheduled bills and paydays to a "Finance Bills" calendar so you can see them next to your other events.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Finance adds your scheduled bills and paydays to a "Finance Bills" calendar so you can see them next to your other events.</string>
 	<key>NSMainStoryboardFile</key>
 	<string></string>
 	<key>NSPrincipalClass</key>

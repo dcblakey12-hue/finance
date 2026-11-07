@@ -32,7 +32,7 @@ enum CashFlowForecastService: Sendable {
         let active = bills.filter { $0.isActive }
         let plainBills = active.map { (name: $0.name, amount: abs($0.amount), dueDay: $0.dueDay, category: $0.category, isIncome: $0.isIncome) }
         let plainEnvelopes = envelopes.map { (category: $0.category, year: $0.year, month: $0.month, allocated: max(0, $0.allocated)) }
-        let plainTx = transactions.map { (date: $0.date, amount: $0.amount) }
+        let plainTx = transactions.filter { $0.category != Categorizer.transfer }.map { (date: $0.date, amount: $0.amount) }
         return forecastPlain(bills: plainBills, envelopes: plainEnvelopes, transactions: plainTx, options: options)
     }
 

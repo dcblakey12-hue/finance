@@ -23,6 +23,7 @@ struct FinanceApp: App {
             RecurringBill.self,
             OFXProfile.self,
             CategoryRule.self,
+            CustomCategory.self,
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {

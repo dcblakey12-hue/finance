@@ -25,10 +25,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            Section("Categories") {
-                Text("Default envelope categories: \(BudgetService.defaultCategories.joined(separator: ", ")). Edit categories from the Transactions table.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            CategoriesSettingsSection()
             Section("Merchant rules") {
                 Text("When you pick a category for a transaction, Finance remembers it for that merchant and applies it to future imports.")
                     .font(.caption).foregroundStyle(.secondary)
