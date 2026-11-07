@@ -210,6 +210,8 @@ struct TransactionsView: View {
                             isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
                 let chosen = transactions.filter { selection.contains($0.id) }
+                // Bank-synced rows only come back if the next sync starts from scratch.
+                if chosen.contains(where: { $0.fitid.hasPrefix(PlaidMapping.prefix) }) { PlaidStore.resetCursors() }
                 let n = TransactionDeletionService.delete(chosen, accounts: accounts, all: transactions, in: context)
                 selection = []
                 status = "Deleted \(n) transaction\(n == 1 ? "" : "s"). Bank-synced ones come back on the next Sync Now."

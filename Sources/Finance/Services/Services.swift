@@ -413,15 +413,11 @@ enum TransactionDeletionService {
         for other in all where !ids.contains(other.id) {
             if let peer = other.transferPeerId, ids.contains(peer) { other.transferPeerId = nil }
         }
-        var removedPlaid = false
         for t in txs {
             if ManualTransactionService.isManual(t) { accounts.first { $0.accountId == t.accountId }?.balance -= t.amount }
-            if t.fitid.hasPrefix("plaid-") { removedPlaid = true }
             context.delete(t)
         }
         try? context.save()
-        // Bank-synced rows only come back if the next sync starts from scratch.
-        if removedPlaid { PlaidStore.resetCursors() }
         return txs.count
     }
 }
