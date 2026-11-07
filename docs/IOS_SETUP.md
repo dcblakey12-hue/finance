@@ -1,6 +1,6 @@
 # Adding the iPhone target in Xcode (one time)
 
-The phone app's code is in `Sources/FinanceiOS/`. It shares these files with the Mac app
+The phone app's code is in `Finance iOS/`. It shares these files with the Mac app
 (each file is compiled into both targets — no copies):
 
 - `Sources/Finance/Models.swift`
@@ -13,7 +13,7 @@ Steps:
 1. File → New → Target… → iOS → App. Product name `Finance iOS`, team = yours, Interface SwiftUI,
    Storage **None**, bundle id `com.blakey.Finance.iOS`. Minimum deployment: iOS 17.
 2. Delete the template's `ContentView.swift` and `...App.swift`; add the five files in
-   `Sources/FinanceiOS/` to the new target (drag in, tick only the iOS target).
+   `Finance iOS/` to the new target (drag in, tick only the iOS target).
 3. For each shared file above: select it, and in the File inspector (right panel) tick **both** targets
    under Target Membership.
 4. iOS target → Signing & Capabilities: add **iCloud** (CloudKit, container `iCloud.com.blakey.finance`),
