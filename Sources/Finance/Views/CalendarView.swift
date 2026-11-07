@@ -11,6 +11,8 @@ struct CalendarView: View {
     @Environment(\.modelContext) private var context
     @State private var editor: ScheduleEditor?
     @State private var listDay: Date?
+    @AppStorage("calendarCellHeight") private var cellHeight: Double = 92
+    @State private var dragStartHeight: Double?
     @State private var entering: EntryTarget?
     @State private var listSelection: String?
     @State private var calService = CalendarService()
@@ -78,6 +80,7 @@ struct CalendarView: View {
                 stats
                 weekdayHeader
                 grid
+                resizeHandle
                 if let sel = selected { dayDetail(sel) }
                 macCalendarBox
             }.padding()
@@ -147,6 +150,29 @@ struct CalendarView: View {
         }
     }
 
+    /// Drag the bar under the grid down to make every day box taller (up to fit more transactions), up to shrink.
+    private var resizeHandle: some View {
+        let rows = max(1, days.count / 7)
+        return HStack {
+            Spacer()
+            Capsule().fill(.secondary.opacity(0.5)).frame(width: 60, height: 5)
+            Spacer()
+        }
+        .frame(height: 16)
+        .contentShape(Rectangle())
+        .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
+        .gesture(DragGesture(minimumDistance: 1)
+            .onChanged { v in
+                let start = dragStartHeight ?? cellHeight
+                dragStartHeight = start
+                cellHeight = min(300, max(70, start + Double(v.translation.height) / Double(rows)))
+            }
+            .onEnded { _ in dragStartHeight = nil })
+        .help("Drag to resize the calendar")
+    }
+
+    private var visibleEvents: Int { max(2, Int((cellHeight - 44) / 15)) }
+
     private var grid: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 4) {
             ForEach(days) { day in dayCell(day) }
@@ -165,13 +191,13 @@ struct CalendarView: View {
                     .foregroundStyle(isToday ? Color.white : Color.primary)
                 Spacer()
             }
-            ForEach(day.events.prefix(3)) { e in
+            ForEach(day.events.prefix(visibleEvents)) { e in
                 Text("\(e.name) \(shortMoney(e.isTransfer ? e.gross : e.amount))")
                     .font(.system(size: 10)).lineLimit(1)
                     .padding(.horizontal, 3)
                     .background((e.isTransfer ? Color.blue : (e.isIncome ? Color.green : Color.red)).opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
             }
-            if day.events.count > 3 { Text("+\(day.events.count - 3) more").font(.system(size: 10)).foregroundStyle(.secondary) }
+            if day.events.count > visibleEvents { Text("+\(day.events.count - visibleEvents) more").font(.system(size: 10)).foregroundStyle(.secondary) }
             Spacer(minLength: 0)
             if let bal = day.closing {
                 Text(shortMoney(bal)).font(.system(size: 10, weight: .semibold)).monospacedDigit()
@@ -180,7 +206,7 @@ struct CalendarView: View {
             }
         }
         .padding(4)
-        .frame(minHeight: 92)
+        .frame(minHeight: cellHeight)
         .background(day.inMonth ? Color.gray.opacity(0.10) : Color.gray.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(isSelected ? Color.accentColor : .clear, lineWidth: 2))
         .opacity(day.inMonth ? 1 : 0.5)
