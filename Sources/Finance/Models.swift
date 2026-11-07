@@ -105,6 +105,10 @@ final class RecurringBill {
     var secondDay: Int = 15
     /// A date a weekly / every-2-weeks schedule lands on; the repeat counts from it.
     var anchorDate: Date? = nil
+    /// Occurrences already dealt with: "yyyy-MM-dd|e" (entered) or "|s" (skipped), comma separated.
+    var occurrenceLogRaw: String = ""
+    /// Account used last time this schedule was entered (default for next time).
+    var accountId: String? = nil
 
     init(id: UUID = UUID(), name: String, amount: Double, dueDay: Int, category: String, isActive: Bool = true, isIncome: Bool = false) {
         self.id = id; self.name = name; self.amount = amount; self.dueDay = dueDay

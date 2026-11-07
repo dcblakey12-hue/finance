@@ -788,3 +788,84 @@ final class SchedulePersistenceTests: XCTestCase {
         XCTAssertEqual(bill.monthlySize, 1000 * 26.0 / 12.0, accuracy: 0.01)
     }
 }
+
+@MainActor
+final class ScheduleEntryTests: XCTestCase {
+    private var context: ModelContext!
+    override func setUp() async throws {
+        let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        context = ModelContext(container)
+    }
+    private func all<T: PersistentModel>(_ t: T.Type) -> [T] { (try? context.fetch(FetchDescriptor<T>())) ?? [] }
+
+    func testOccurrenceLogRoundTripAndExcludedDates() {
+        let cal = Calendar.current
+        let d = cal.date(from: DateComponents(year: 2026, month: 11, day: 15))!
+        let bill = RecurringBill(name: "Rent", amount: 1200, dueDay: 15, category: "Housing")
+        bill.record(.skipped, on: d, now: d)
+        XCTAssertEqual(bill.occurrenceLogRaw, "2026-11-15|s")
+        XCTAssertEqual(bill.occurrenceLog["2026-11-15"], .skipped)
+        XCTAssertFalse(bill.rule.occurs(on: d))                                   // skipped day no longer projected
+        XCTAssertEqual(bill.rule.nextDate(from: d), cal.date(from: DateComponents(year: 2026, month: 12, day: 15)))
+    }
+
+    func testEnterPostsEditedTransactionAndMovesToNextPayment() throws {
+        let acct = Account(name: "Checking", type: .checking, accountId: "chk", bankName: "B", balance: 2000)
+        context.insert(acct)
+        let bill = RecurringBill(name: "Electric", amount: 100, dueDay: 15, category: "Utilities")
+        context.insert(bill)
+        let due = try XCTUnwrap(bill.rule.nextDate(from: Date()))
+        let paidOn = Calendar.current.date(byAdding: .day, value: 2, to: due)!
+        XCTAssertTrue(ScheduleService.enter(bill, occurrence: due, postedOn: paidOn, amount: 117.25, account: acct, in: context))
+        let tx = try XCTUnwrap(all(TransactionRecord.self).first)
+        XCTAssertEqual(tx.amount, -117.25); XCTAssertEqual(tx.category, "Utilities"); XCTAssertEqual(tx.date, paidOn)
+        XCTAssertEqual(acct.balance, 2000 - 117.25, accuracy: 0.001)
+        XCTAssertEqual(bill.accountId, "chk"); XCTAssertEqual(bill.lastPaid, paidOn)
+        let next = try XCTUnwrap(bill.rule.nextDate(from: Date()))
+        XCTAssertGreaterThan(next, due)                                           // that occurrence is done
+    }
+
+    func testSkipCreatesNoTransaction() throws {
+        let bill = RecurringBill(name: "Gym", amount: 40, dueDay: 3, category: "Health")
+        context.insert(bill)
+        let due = try XCTUnwrap(bill.rule.nextDate(from: Date()))
+        ScheduleService.skip(bill, occurrence: due, in: context)
+        XCTAssertTrue(all(TransactionRecord.self).isEmpty)
+        XCTAssertNotEqual(bill.rule.nextDate(from: Date()), due)
+    }
+
+    func testEnteringIncomeAndTransfer() throws {
+        let chk = Account(name: "Checking", type: .checking, accountId: "chk", bankName: "B", balance: 1000)
+        let visa = Account(name: "Visa", type: .creditCard, accountId: "visa", bankName: "B", balance: -400)
+        context.insert(chk); context.insert(visa)
+        let pay = RecurringBill(name: "Paycheck", amount: 1500, dueDay: 1, category: "Income", isIncome: true)
+        let payment = RecurringBill(name: "Visa payment", amount: 400, dueDay: 10, category: "Transfer")
+        payment.kindRaw = "transfer"
+        context.insert(pay); context.insert(payment)
+
+        XCTAssertTrue(ScheduleService.enter(pay, occurrence: try XCTUnwrap(pay.rule.nextDate(from: Date())),
+                                            postedOn: Date(), amount: 1500, account: chk, in: context))
+        XCTAssertEqual(chk.balance, 2500)
+
+        XCTAssertFalse(ScheduleService.enter(payment, occurrence: Date(), postedOn: Date(), amount: 400,
+                                             account: nil, from: chk, to: chk, in: context))   // same account refused
+        XCTAssertTrue(ScheduleService.enter(payment, occurrence: try XCTUnwrap(payment.rule.nextDate(from: Date())),
+                                            postedOn: Date(), amount: 400, account: nil, from: chk, to: visa, in: context))
+        XCTAssertEqual(chk.balance, 2100); XCTAssertEqual(visa.balance, 0)
+        let txs = all(TransactionRecord.self).filter { $0.name == "Visa payment" }
+        XCTAssertEqual(txs.count, 2)
+        XCTAssertEqual(txs[0].transferPeerId, txs[1].id); XCTAssertEqual(txs[1].transferPeerId, txs[0].id)
+        XCTAssertTrue(txs.allSatisfy { $0.category == "Transfer" })
+    }
+
+    func testCalendarAndItemsHonorEnteredDays() throws {
+        let bill = RecurringBill(name: "Rent", amount: 1000, dueDay: 15, category: "Housing")
+        let cal = Calendar.current
+        let day = cal.date(from: DateComponents(year: 2026, month: 11, day: 15))!
+        bill.record(.entered, on: day, now: day)
+        let events = CashCalendar.events(on: day, schedules: [bill.item])
+        XCTAssertTrue(events.isEmpty)
+    }
+}

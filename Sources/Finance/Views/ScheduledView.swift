@@ -11,6 +11,8 @@ struct ScheduledView: View {
     @State private var selection = Set<UUID>()
     @State private var editor: ScheduleEditor?
     @State private var pendingDelete: RecurringBill?
+    @State private var entering: RecurringBill?
+    @State private var note = ""
 
     private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }.sorted { $0.name < $1.name } }
     private var accountNames: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
@@ -62,14 +64,30 @@ struct ScheduledView: View {
                 }
                 .contextMenu(forSelectionType: UUID.self) { ids in
                     if let s = schedule(for: ids) {
-                        Button("Edit…") { editor = ScheduleEditor(existing: s, draft: draft(of: s)) }
+                        if s.isActive {
+                            Button("Enter Next Payment…") { entering = s }
+                            Button("Skip Next Payment") { skipNext(s) }
+                        }
+                        Button("Edit Schedule…") { editor = ScheduleEditor(existing: s, draft: draft(of: s)) }
+                        if !s.occurrenceLogRaw.isEmpty {
+                            Button("Forget Entered/Skipped History") { s.occurrenceLogRaw = ""; try? context.save() }
+                        }
                         Button(s.isActive ? "Pause" : "Resume") { s.isActive.toggle(); try? context.save() }
                         Divider()
                         Button("Delete…", role: .destructive) { pendingDelete = s }
                     }
                 } primaryAction: { ids in
-                    if let s = schedule(for: ids) { editor = ScheduleEditor(existing: s, draft: draft(of: s)) }
+                    // Double-click: enter (or skip) the next payment. Edit the schedule from the right-click menu.
+                    if let s = schedule(for: ids) {
+                        if s.isActive { entering = s } else { editor = ScheduleEditor(existing: s, draft: draft(of: s)) }
+                    }
                 }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if !note.isEmpty {
+                Text(note).font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8).background(.bar)
             }
         }
         .navigationTitle("Scheduled Transactions")
@@ -78,6 +96,12 @@ struct ScheduledView: View {
                 Button("Add") {
                     editor = ScheduleEditor(existing: nil, draft: ScheduleDraft(name: "", amount: 0, dueDay: 1, category: "Other", isIncome: false))
                 }
+            }
+        }
+        .sheet(item: $entering) { bill in
+            EnterScheduledSheet(bill: bill, accounts: accounts) { message in
+                entering = nil
+                if let message { note = message }
             }
         }
         .sheet(item: $editor) { ed in
@@ -97,6 +121,12 @@ struct ScheduledView: View {
         } message: {
             Text("It will no longer count in the cash flow forecast. Events already synced to Apple Calendar stay there.")
         }
+    }
+
+    private func skipNext(_ s: RecurringBill) {
+        guard let due = s.rule.nextDate(from: Date()) else { return }
+        ScheduleService.skip(s, occurrence: due, in: context)
+        note = "Skipped \(s.name) on \(due.formatted(.dateTime.month(.abbreviated).day()))."
     }
 
     private func schedule(for ids: Set<UUID>) -> RecurringBill? {
@@ -252,5 +282,91 @@ struct ScheduleEditorSheet: View {
     private func ordinal(_ n: Int) -> String {
         let f = NumberFormatter(); f.numberStyle = .ordinal
         return f.string(from: NSNumber(value: n)) ?? "\(n)"
+    }
+}
+
+
+// MARK: - Enter or skip the next payment
+
+struct EnterScheduledSheet: View {
+    let bill: RecurringBill
+    let accounts: [Account]
+    /// Called with a status message, or nil if cancelled.
+    let onDone: (String?) -> Void
+
+    @Environment(\.modelContext) private var context
+    @State private var postedOn = Date()
+    @State private var amountText = ""
+    @State private var accountId: String?
+    @State private var fromId: String?
+    @State private var toId: String?
+
+    private var occurrence: Date? { bill.rule.nextDate(from: Date()) }
+    private var amount: Double? {
+        Double(amountText.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: ""))
+    }
+    private var canEnter: Bool {
+        guard occurrence != nil, let a = amount, a > 0 else { return false }
+        return bill.isTransfer ? (fromId != nil && toId != nil && fromId != toId) : accountId != nil
+    }
+    private func account(_ id: String?) -> Account? { accounts.first { $0.accountId == id } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(bill.name).font(.headline)
+            if let due = occurrence {
+                Text("\(bill.rule.summary()) • due \(due.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.callout).foregroundStyle(.secondary)
+            } else {
+                Text("No upcoming payment.").foregroundStyle(.secondary)
+            }
+            Form {
+                DatePicker("Date", selection: $postedOn, displayedComponents: .date)
+                TextField("Amount", text: $amountText)
+                if bill.isTransfer {
+                    Picker("From account", selection: $fromId) {
+                        Text("Choose…").tag(String?.none)
+                        ForEach(accounts) { Text($0.name).tag(Optional($0.accountId)) }
+                    }
+                    Picker("To account", selection: $toId) {
+                        Text("Choose…").tag(String?.none)
+                        ForEach(accounts) { Text($0.name).tag(Optional($0.accountId)) }
+                    }
+                } else {
+                    Picker(bill.isIncome ? "Deposit to" : "Pay from", selection: $accountId) {
+                        Text("Choose…").tag(String?.none)
+                        ForEach(accounts) { Text($0.name).tag(Optional($0.accountId)) }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            Text("Enter adds a real transaction and updates the account balance; change the date or amount if this one differs. Skip leaves this payment out and moves to the next one. Importing your bank file later replaces an entered transaction that matches.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("Skip This One") {
+                    if let due = occurrence { ScheduleService.skip(bill, occurrence: due, in: context) }
+                    onDone("Skipped \(bill.name).")
+                }.disabled(occurrence == nil)
+                Spacer()
+                Button("Cancel") { onDone(nil) }.keyboardShortcut(.cancelAction)
+                Button("Enter Transaction") {
+                    guard let due = occurrence, let amt = amount else { return }
+                    let ok = ScheduleService.enter(bill, occurrence: due, postedOn: postedOn, amount: amt,
+                                                   account: account(accountId), from: account(fromId), to: account(toId), in: context)
+                    onDone(ok ? "Entered \(bill.name) for \(currency.string(from: NSNumber(value: amt)) ?? "")." : nil)
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canEnter)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+        .onAppear {
+            postedOn = occurrence ?? Date()
+            amountText = String(format: "%.2f", abs(bill.amount))
+            accountId = bill.accountId ?? accounts.first?.accountId
+            fromId = bill.fromAccountId; toId = bill.toAccountId
+        }
     }
 }

@@ -22,12 +22,15 @@ struct ScheduleRule: Equatable {
     var dueDay: Int = 1
     var secondDay: Int = 15
     var anchor: Date? = nil
+    /// Specific days (start of day) to leave out, e.g. payments already entered or skipped.
+    var excluded: Set<Date> = []
 
     static let fallbackAnchor = Date(timeIntervalSinceReferenceDate: 0)
 
     private static func clamp(_ d: Int) -> Int { min(max(d, 1), 28) }
 
     func occurs(on date: Date, calendar: Calendar = .current) -> Bool {
+        if !excluded.isEmpty, excluded.contains(calendar.startOfDay(for: date)) { return false }
         switch frequency {
         case .monthly:
             return calendar.component(.day, from: date) == Self.clamp(dueDay)
@@ -94,6 +97,38 @@ struct ScheduleRule: Equatable {
         case .weekly: return "Every \(weekdayName())"
         case .biweekly: return "Every other \(weekdayName())"
         }
+    }
+}
+
+enum OccurrenceStatus: String { case entered = "e", skipped = "s" }
+
+/// Text format for `RecurringBill.occurrenceLogRaw`.
+enum OccurrenceLog {
+    static func key(_ d: Date, calendar: Calendar = .current) -> String {
+        let c = calendar.dateComponents([.year, .month, .day], from: d)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+    static func date(fromKey k: String, calendar: Calendar = .current) -> Date? {
+        let p = k.split(separator: "-").compactMap { Int($0) }
+        guard p.count == 3 else { return nil }
+        return calendar.date(from: DateComponents(year: p[0], month: p[1], day: p[2])).map { calendar.startOfDay(for: $0) }
+    }
+    static func parse(_ raw: String) -> [String: OccurrenceStatus] {
+        var out: [String: OccurrenceStatus] = [:]
+        for part in raw.split(separator: ",") {
+            let bits = part.split(separator: "|")
+            if bits.count == 2, let s = OccurrenceStatus(rawValue: String(bits[1])) { out[String(bits[0])] = s }
+        }
+        return out
+    }
+    static func serialize(_ log: [String: OccurrenceStatus], keepingSince cutoff: Date? = nil, calendar: Calendar = .current) -> String {
+        log.filter { k, _ in
+            guard let cutoff, let d = date(fromKey: k, calendar: calendar) else { return true }
+            return d >= calendar.startOfDay(for: cutoff)
+        }
+        .sorted { $0.key < $1.key }
+        .map { "\($0.key)|\($0.value.rawValue)" }
+        .joined(separator: ",")
     }
 }
 
@@ -165,6 +200,42 @@ enum ScheduleService {
         BudgetSync.apply(in: context)
     }
 
+    /// Enter the next payment as a real transaction (amount and date may differ from the schedule),
+    /// then count that occurrence as done so it isn't projected again. A transfer creates both
+    /// sides, linked. Returns false if the needed account(s) are missing.
+    @MainActor @discardableResult
+    static func enter(_ bill: RecurringBill, occurrence: Date, postedOn: Date, amount: Double,
+                      account: Account?, from: Account? = nil, to: Account? = nil,
+                      in context: ModelContext) -> Bool {
+        let size = abs(amount)
+        if bill.isTransfer {
+            guard let from, let to, from.accountId != to.accountId else { return false }
+            let out = ManualTransactionService.add(to: from, date: postedOn, name: bill.name, amount: -size,
+                                                   category: Categorizer.transfer, memo: "Scheduled transfer", in: context)
+            let inn = ManualTransactionService.add(to: to, date: postedOn, name: bill.name, amount: size,
+                                                   category: Categorizer.transfer, memo: "Scheduled transfer", in: context)
+            out.transferPeerId = inn.id; inn.transferPeerId = out.id
+            bill.fromAccountId = from.accountId; bill.toAccountId = to.accountId
+        } else {
+            guard let account else { return false }
+            ManualTransactionService.add(to: account, date: postedOn, name: bill.name,
+                                         amount: bill.isIncome ? size : -size,
+                                         category: bill.category, memo: "Scheduled", in: context)
+            bill.accountId = account.accountId
+        }
+        bill.lastPaid = postedOn
+        bill.record(.entered, on: occurrence)
+        try? context.save()
+        return true
+    }
+
+    /// Leave this payment out: no transaction, and the schedule moves on to the next one.
+    @MainActor
+    static func skip(_ bill: RecurringBill, occurrence: Date, in context: ModelContext) {
+        bill.record(.skipped, on: occurrence)
+        try? context.save()
+    }
+
     /// Schedules in the order they come due: the next payment first, then the rest through the
     /// month, then the ones whose day has already passed (they roll over to next month).
     /// Paused schedules go last.
@@ -206,7 +277,8 @@ struct ScheduleItem: Equatable {
     var frequency: ScheduleFrequency = .monthly
     var secondDay: Int = 15
     var anchor: Date? = nil
-    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: anchor) }
+    var excluded: Set<Date> = []
+    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: anchor, excluded: excluded) }
     /// Average amount per month (signed), counting every repeat.
     var monthlyAmount: Double { amount * rule.monthlyFactor }
     var isIncome: Bool { !isTransfer && amount > 0 }
@@ -329,13 +401,24 @@ extension RecurringBill {
         }
         return ScheduleItem(name: name, amount: signedAmount, dueDay: dueDay, category: category,
                             isTransfer: isTransfer, fromAccountId: fromAccountId, toAccountId: toAccountId, detail: detail,
-                            frequency: rule.frequency, secondDay: secondDay, anchor: anchorDate)
+                            frequency: rule.frequency, secondDay: secondDay, anchor: anchorDate, excluded: rule.excluded)
     }
     var item: ScheduleItem { item() }
 
     var rule: ScheduleRule {
         ScheduleRule(frequency: ScheduleFrequency(rawValue: frequencyRaw) ?? .monthly,
-                     dueDay: dueDay, secondDay: secondDay, anchor: anchorDate)
+                     dueDay: dueDay, secondDay: secondDay, anchor: anchorDate,
+                     excluded: Set(occurrenceLog.keys.compactMap { OccurrenceLog.date(fromKey: $0) }))
+    }
+
+    /// Dealt-with occurrences by day key ("yyyy-MM-dd").
+    var occurrenceLog: [String: OccurrenceStatus] { OccurrenceLog.parse(occurrenceLogRaw) }
+
+    /// Mark the occurrence on `date` as entered or skipped (older than ~4 months are dropped).
+    func record(_ status: OccurrenceStatus, on date: Date, now: Date = Date(), calendar: Calendar = .current) {
+        var log = occurrenceLog
+        log[OccurrenceLog.key(date, calendar: calendar)] = status
+        occurrenceLogRaw = OccurrenceLog.serialize(log, keepingSince: calendar.date(byAdding: .day, value: -120, to: now), calendar: calendar)
     }
     /// Average amount per month in absolute terms, counting every repeat.
     var monthlySize: Double { abs(amount) * rule.monthlyFactor }

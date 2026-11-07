@@ -8,6 +8,7 @@ struct ScheduledTab: View {
     @Environment(\.modelContext) private var context
 
     @State private var editing: EditTarget?
+    @State private var entering: RecurringBill?
 
     private struct EditTarget: Identifiable { let id = UUID(); let existing: RecurringBill? }
     private var names: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
@@ -17,7 +18,7 @@ struct ScheduledTab: View {
         NavigationStack {
             List {
                 ForEach(ScheduleService.orderedByNextDue(schedules)) { s in
-                    Button { editing = EditTarget(existing: s) } label: {
+                    Button { if s.isActive { entering = s } else { editing = EditTarget(existing: s) } } label: {
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(s.name).foregroundStyle(s.isActive ? Color.primary : .secondary)
@@ -35,6 +36,15 @@ struct ScheduledTab: View {
                                 .foregroundStyle(s.isIncome ? .green : (s.isTransfer ? .blue : .primary))
                         }
                     }
+                    .contextMenu {
+                        if s.isActive {
+                            Button("Enter next payment…") { entering = s }
+                            Button("Skip next payment") {
+                                if let due = s.rule.nextDate(from: Date()) { ScheduleService.skip(s, occurrence: due, in: context) }
+                            }
+                        }
+                        Button("Edit schedule…") { editing = EditTarget(existing: s) }
+                    }
                 }
                 .onDelete { idx in
                     let ordered = ScheduleService.orderedByNextDue(schedules)
@@ -49,6 +59,9 @@ struct ScheduledTab: View {
                     ContentUnavailableView("Nothing scheduled", systemImage: "calendar.badge.clock",
                         description: Text("Tap + to add a bill, payday or transfer."))
                 }
+            }
+            .sheet(item: $entering) { bill in
+                EnterScheduledForm(bill: bill, accounts: accounts) { entering = nil }
             }
             .sheet(item: $editing) { target in
                 ScheduleForm(existing: target.existing,
@@ -153,6 +166,86 @@ struct ScheduleForm: View {
                                       frequency: s.rule.frequency, secondDay: s.secondDay, startDate: s.anchorDate)
                 amountText = String(format: "%.2f", abs(s.amount))
             }
+        }
+    }
+}
+
+
+/// Enter (or skip) the next payment of a schedule as a real transaction.
+struct EnterScheduledForm: View {
+    let bill: RecurringBill
+    let accounts: [Account]
+    let done: () -> Void
+
+    @Environment(\.modelContext) private var context
+    @State private var postedOn = Date()
+    @State private var amountText = ""
+    @State private var accountId: String?
+    @State private var fromId: String?
+    @State private var toId: String?
+
+    private var occurrence: Date? { bill.rule.nextDate(from: Date()) }
+    private var amount: Double? { Double(amountText.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: "")) }
+    private var canEnter: Bool {
+        guard occurrence != nil, let a = amount, a > 0 else { return false }
+        return bill.isTransfer ? (fromId != nil && toId != nil && fromId != toId) : accountId != nil
+    }
+    private func account(_ id: String?) -> Account? { accounts.first { $0.accountId == id } }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    if let due = occurrence {
+                        Text("\(bill.rule.summary()) • due \(due.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    DatePicker("Date", selection: $postedOn, displayedComponents: .date)
+                    TextField("Amount", text: $amountText).keyboardType(.decimalPad)
+                    if bill.isTransfer {
+                        Picker("From", selection: $fromId) {
+                            Text("Choose…").tag(String?.none)
+                            ForEach(accounts) { Text($0.name).tag(Optional($0.accountId)) }
+                        }
+                        Picker("To", selection: $toId) {
+                            Text("Choose…").tag(String?.none)
+                            ForEach(accounts) { Text($0.name).tag(Optional($0.accountId)) }
+                        }
+                    } else {
+                        Picker(bill.isIncome ? "Deposit to" : "Pay from", selection: $accountId) {
+                            Text("Choose…").tag(String?.none)
+                            ForEach(accounts) { Text($0.name).tag(Optional($0.accountId)) }
+                        }
+                    }
+                } footer: {
+                    Text("Enter adds a real transaction and updates the balance. Skip leaves this payment out.")
+                }
+                Section {
+                    Button("Skip This One", role: .destructive) {
+                        if let due = occurrence { ScheduleService.skip(bill, occurrence: due, in: context) }
+                        done()
+                    }.disabled(occurrence == nil)
+                }
+            }
+            .navigationTitle(bill.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: done) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Enter") {
+                        guard let due = occurrence, let amt = amount else { return }
+                        ScheduleService.enter(bill, occurrence: due, postedOn: postedOn, amount: amt,
+                                              account: account(accountId), from: account(fromId), to: account(toId), in: context)
+                        done()
+                    }.disabled(!canEnter)
+                }
+            }
+        }
+        .onAppear {
+            postedOn = occurrence ?? Date()
+            amountText = String(format: "%.2f", abs(bill.amount))
+            accountId = bill.accountId ?? accounts.first?.accountId
+            fromId = bill.fromAccountId; toId = bill.toAccountId
         }
     }
 }
