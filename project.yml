@@ -49,6 +49,7 @@ targets:
         NSMainStoryboardFile: ""
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.finance
+        FinanceCloudContainer: ""        # e.g. iCloud.com.you.finance; empty = no iCloud sync
         ITSAppUsesNonExemptEncryption: false
         NSSupportsAutomaticGraphicsSwitching: true
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)

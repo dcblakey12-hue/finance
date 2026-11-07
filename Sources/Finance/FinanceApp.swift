@@ -25,7 +25,12 @@ struct FinanceApp: App {
             CategoryRule.self,
             CustomCategory.self,
         ])
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        // iCloud sync is on only when Info.plist's FinanceCloudContainer names a CloudKit
+        // container (e.g. "iCloud.com.you.finance"); empty keeps the data local.
+        let cloudID = (Bundle.main.object(forInfoDictionaryKey: "FinanceCloudContainer") as? String)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false,
+                                        cloudKitDatabase: cloudID.isEmpty ? .none : .private(cloudID))
         do {
             return try ModelContainer(for: schema, configurations: [config])
         } catch {
