@@ -6,22 +6,64 @@ struct DashboardView: View {
     @Query(sort: \TransactionRecord.date, order: .reverse) var transactions: [TransactionRecord]
     @Query var bills: [RecurringBill]
 
-    var monthlySummary: MonthlySummary {
-        let now = Date()
-        return BudgetService.summary(year: Calendar.current.component(.year, from: now), month: Calendar.current.component(.month, from: now), transactions: transactions)
-    }
+    /// Called with an account's OFX accountId when its row is double-clicked.
+    var onOpenAccount: (String) -> Void = { _ in }
+
+    @AppStorage("finance.dashboard.period") private var periodRaw = DashboardPeriod.thisMonth.rawValue
+    private var period: DashboardPeriod { DashboardPeriod(rawValue: periodRaw) ?? .thisMonth }
+
+    private var rows: [SpendingReport.Row] { transactions.map { ($0.category, $0.amount, $0.date) } }
+    private var totals: (income: Double, expenses: Double) { SpendingReport.totals(rows, period: period) }
+    private var categorySpend: [CategorySpend] { SpendingReport.byCategory(rows, period: period) }
     var netWorth: Double { accounts.reduce(0) { $0 + $1.balance } }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Overview").font(.largeTitle.bold())
+                HStack {
+                    Text("Overview").font(.largeTitle.bold())
+                    Spacer()
+                    Picker("Period", selection: $periodRaw) {
+                        ForEach(DashboardPeriod.allCases) { Text($0.rawValue).tag($0.rawValue) }
+                    }
+                    .frame(width: 190)
+                }
                 HStack(spacing: 16) {
                     KpiCard(title: "Net worth", value: currency.string(from: NSNumber(value: netWorth)) ?? "$0", icon: "wallet.bifold")
-                    KpiCard(title: "Income (this month)", value: currency.string(from: NSNumber(value: monthlySummary.income)) ?? "$0", icon: "arrow.down.circle")
-                    KpiCard(title: "Spent (this month)", value: currency.string(from: NSNumber(value: monthlySummary.expenses)) ?? "$0", icon: "arrow.up.circle")
+                    KpiCard(title: "Income (\(period.rawValue.lowercased()))", value: currency.string(from: NSNumber(value: totals.income)) ?? "$0", icon: "arrow.down.circle")
+                    KpiCard(title: "Spent (\(period.rawValue.lowercased()))", value: currency.string(from: NSNumber(value: totals.expenses)) ?? "$0", icon: "arrow.up.circle")
                     KpiCard(title: "Upcoming bills", value: "\(bills.filter { $0.isActive }.count)", icon: "calendar.badge.clock")
                 }
+
+                Text("Spending by category — \(period.rawValue)").font(.headline)
+                if categorySpend.isEmpty {
+                    Text("No spending in this period.").foregroundStyle(.secondary)
+                } else {
+                    let maxSpend = categorySpend.first?.amount ?? 1
+                    ForEach(categorySpend) { c in
+                        HStack(spacing: 12) {
+                            Text(c.category)
+                                .frame(width: 140, alignment: .leading)
+                                .foregroundStyle(c.category == Categorizer.uncategorized ? .secondary : .primary)
+                            ProgressView(value: c.amount, total: maxSpend)
+                            Text("\(c.count)").font(.caption).foregroundStyle(.secondary)
+                                .frame(width: 36, alignment: .trailing)
+                            Text(percent(c.amount)).font(.caption).foregroundStyle(.secondary)
+                                .frame(width: 44, alignment: .trailing)
+                            Text(currency.string(from: NSNumber(value: c.amount)) ?? "")
+                                .monospacedDigit()
+                                .frame(width: 100, alignment: .trailing)
+                        }
+                    }
+                    Divider()
+                    HStack {
+                        Text("Total").font(.headline)
+                        Spacer()
+                        Text(currency.string(from: NSNumber(value: categorySpend.reduce(0) { $0 + $1.amount })) ?? "")
+                            .font(.headline.monospacedDigit())
+                    }
+                }
+
                 if accounts.isEmpty {
                     ContentUnavailableView(
                         "No accounts yet",
@@ -30,6 +72,7 @@ struct DashboardView: View {
                     )
                 } else {
                     Text("Accounts").font(.headline)
+                    Text("Double-click an account to see its transactions.").font(.caption).foregroundStyle(.secondary)
                     ForEach(accounts) { a in
                         HStack {
                             VStack(alignment: .leading) { Text(a.name).font(.headline); Text("\(a.bankName) •••\(a.accountId.suffix(4))").font(.caption).foregroundStyle(.secondary) }
@@ -37,6 +80,9 @@ struct DashboardView: View {
                             Text(currency.string(from: NSNumber(value: a.balance)) ?? "$0").font(.title3.monospacedDigit())
                         }
                         .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { onOpenAccount(a.accountId) }
+                        .help("Double-click to see this account's transactions")
                     }
                 }
                 Text("Recent transactions").font(.headline)
@@ -58,6 +104,12 @@ struct DashboardView: View {
             .padding()
         }
         .navigationTitle("Dashboard")
+    }
+
+    private func percent(_ amount: Double) -> String {
+        let total = totals.expenses
+        guard total > 0 else { return "" }
+        return String(format: "%.0f%%", amount / total * 100)
     }
 }
 

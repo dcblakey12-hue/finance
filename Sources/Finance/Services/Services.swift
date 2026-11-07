@@ -182,3 +182,68 @@ final class CalendarService {
         }.sorted { $0.dueDay < $1.dueDay }
     }
 }
+
+// MARK: - Dashboard reporting
+
+enum DashboardPeriod: String, CaseIterable, Identifiable {
+    case thisMonth = "This Month", lastMonth = "Last Month", last30Days = "Last 30 Days"
+    case thisYear = "This Year", lastYear = "Last Year", allTime = "All Time"
+    var id: String { rawValue }
+
+    /// Half-open date range [start, end). A nil start means "from the beginning".
+    func range(now: Date = Date(), calendar: Calendar = .current) -> (start: Date?, end: Date) {
+        func interval(_ component: Calendar.Component, offset: Int) -> (start: Date?, end: Date) {
+            let anchor = calendar.date(byAdding: component, value: offset, to: now) ?? now
+            let i = calendar.dateInterval(of: component, for: anchor)
+            return (i?.start, i?.end ?? now)
+        }
+        switch self {
+        case .thisMonth: return interval(.month, offset: 0)
+        case .lastMonth: return interval(.month, offset: -1)
+        case .thisYear: return interval(.year, offset: 0)
+        case .lastYear: return interval(.year, offset: -1)
+        case .last30Days:
+            let today = calendar.startOfDay(for: now)
+            return (calendar.date(byAdding: .day, value: -29, to: today),
+                    calendar.date(byAdding: .day, value: 1, to: today) ?? now)
+        case .allTime: return (nil, .distantFuture)
+        }
+    }
+
+    func contains(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        let r = range(now: now, calendar: calendar)
+        if let start = r.start, date < start { return false }
+        return date < r.end
+    }
+}
+
+struct CategorySpend: Identifiable, Equatable {
+    let category: String
+    let amount: Double   // positive total spent
+    let count: Int
+    var id: String { category }
+}
+
+enum SpendingReport {
+    typealias Row = (category: String, amount: Double, date: Date)
+
+    /// Expenses (negative amounts) in the period, summed per category, biggest first.
+    static func byCategory(_ rows: [Row], period: DashboardPeriod, now: Date = Date(), calendar: Calendar = .current) -> [CategorySpend] {
+        var totals: [String: (amount: Double, count: Int)] = [:]
+        for r in rows where r.amount < 0 && period.contains(r.date, now: now, calendar: calendar) {
+            let cur = totals[r.category] ?? (0, 0)
+            totals[r.category] = (cur.amount + abs(r.amount), cur.count + 1)
+        }
+        return totals.map { CategorySpend(category: $0.key, amount: $0.value.amount, count: $0.value.count) }
+            .sorted { $0.amount != $1.amount ? $0.amount > $1.amount : $0.category < $1.category }
+    }
+
+    /// Money in and money out within the period.
+    static func totals(_ rows: [Row], period: DashboardPeriod, now: Date = Date(), calendar: Calendar = .current) -> (income: Double, expenses: Double) {
+        var income = 0.0, expenses = 0.0
+        for r in rows where period.contains(r.date, now: now, calendar: calendar) {
+            if r.amount < 0 { expenses += abs(r.amount) } else { income += r.amount }
+        }
+        return (income, expenses)
+    }
+}

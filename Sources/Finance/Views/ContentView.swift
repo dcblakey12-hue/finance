@@ -38,7 +38,11 @@ struct ContentView: View {
         } detail: {
             if let sel = selection {
                 switch sel {
-                case .dashboard: DashboardView()
+                case .dashboard:
+                    DashboardView(onOpenAccount: { acctId in
+                        transactionsAccount = acctId
+                        selection = .transactions
+                    })
                 case .accounts:
                     AccountsView(onOpenTransactions: { acctId in
                         transactionsAccount = acctId

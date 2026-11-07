@@ -164,3 +164,39 @@ final class RunningBalanceTests: XCTestCase {
         XCTAssertTrue(RunningBalance.compute(newestFirst: [], endingBalance: 10).isEmpty)
     }
 }
+
+final class DashboardReportTests: XCTestCase {
+    private var cal: Calendar = {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c
+    }()
+    private func d(_ y: Int, _ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: y, month: m, day: day))! }
+    private var now: Date { d(2026, 11, 7) }
+
+    func testPeriodRanges() {
+        func inP(_ p: DashboardPeriod, _ date: Date) -> Bool { p.contains(date, now: now, calendar: cal) }
+        XCTAssertTrue(inP(.thisMonth, d(2026, 11, 1)));  XCTAssertFalse(inP(.thisMonth, d(2026, 10, 31)))
+        XCTAssertFalse(inP(.thisMonth, d(2026, 12, 1)))
+        XCTAssertTrue(inP(.lastMonth, d(2026, 10, 31))); XCTAssertFalse(inP(.lastMonth, d(2026, 11, 1)))
+        XCTAssertTrue(inP(.last30Days, d(2026, 10, 9))); XCTAssertFalse(inP(.last30Days, d(2026, 10, 8)))
+        XCTAssertTrue(inP(.last30Days, d(2026, 11, 7))); XCTAssertFalse(inP(.last30Days, d(2026, 11, 8)))
+        XCTAssertTrue(inP(.thisYear, d(2026, 1, 1)));    XCTAssertFalse(inP(.thisYear, d(2025, 12, 31)))
+        XCTAssertTrue(inP(.lastYear, d(2025, 12, 31)));  XCTAssertFalse(inP(.lastYear, d(2026, 1, 1)))
+        XCTAssertTrue(inP(.allTime, d(1999, 1, 1)))
+    }
+
+    func testSpendingByCategoryTotalsAndSorts() {
+        let rows: [SpendingReport.Row] = [
+            ("Dining", -20, d(2026, 11, 2)), ("Dining", -30, d(2026, 11, 5)),
+            ("Groceries", -80, d(2026, 11, 3)),
+            ("Income", 1000, d(2026, 11, 1)),              // not spending
+            ("Dining", -999, d(2026, 10, 15)),             // outside this month
+        ]
+        let r = SpendingReport.byCategory(rows, period: .thisMonth, now: now, calendar: cal)
+        XCTAssertEqual(r, [CategorySpend(category: "Groceries", amount: 80, count: 1),
+                           CategorySpend(category: "Dining", amount: 50, count: 2)])
+        let t = SpendingReport.totals(rows, period: .thisMonth, now: now, calendar: cal)
+        XCTAssertEqual(t.income, 1000, accuracy: 0.001)
+        XCTAssertEqual(t.expenses, 130, accuracy: 0.001)
+        XCTAssertEqual(SpendingReport.byCategory(rows, period: .allTime, now: now, calendar: cal).first?.category, "Dining")
+    }
+}
