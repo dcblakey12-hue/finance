@@ -38,6 +38,38 @@ enum ScheduleService {
                              category: cat, isIncome: isIncome)
     }
 
+    /// Create or update a scheduled transaction from a draft, then make sure its category's
+    /// budget envelope covers it. Shared by the Mac and iPhone apps.
+    @MainActor
+    static func save(_ d: ScheduleDraft, existing: RecurringBill?, in context: ModelContext) {
+        let category = d.isTransfer ? Categorizer.transfer : (d.isIncome ? "Income" : d.category)
+        let kind = d.isTransfer ? "transfer" : (d.isIncome ? "credit" : "debit")
+        let from = d.isTransfer ? d.fromAccountId : nil, to = d.isTransfer ? d.toAccountId : nil
+        if let s = existing {
+            s.name = d.name; s.amount = abs(d.amount); s.dueDay = d.dueDay
+            s.category = category; s.kindRaw = kind; s.isActive = d.isActive
+            s.fromAccountId = from; s.toAccountId = to
+        } else {
+            let s = RecurringBill(name: d.name, amount: abs(d.amount), dueDay: d.dueDay, category: category,
+                                  isActive: d.isActive, isIncome: d.isIncome && !d.isTransfer)
+            s.kindRaw = kind; s.fromAccountId = from; s.toAccountId = to
+            context.insert(s)
+        }
+        try? context.save()
+        BudgetSync.apply(in: context)
+    }
+
+    /// Schedules in the order they come due: the next payment first, then the rest through the
+    /// month, then the ones whose day has already passed (they roll over to next month).
+    /// Paused schedules go last.
+    @MainActor
+    static func orderedByNextDue(_ bills: [RecurringBill], from: Date = Date(), calendar: Calendar = .current) -> [RecurringBill] {
+        func next(_ b: RecurringBill) -> Date { nextDueDate(dueDay: b.dueDay, from: from, calendar: calendar) ?? .distantFuture }
+        let active = bills.filter(\.isActive).sorted { (next($0), $0.name) < (next($1), $1.name) }
+        let paused = bills.filter { !$0.isActive }.sorted { ($0.dueDay, $0.name) < ($1.dueDay, $1.name) }
+        return active + paused
+    }
+
     /// Next date on or after `from` (start of day) that falls on `dueDay`.
     static func nextDueDate(dueDay: Int, from: Date, calendar: Calendar = .current) -> Date? {
         let day = min(max(dueDay, 1), 28)

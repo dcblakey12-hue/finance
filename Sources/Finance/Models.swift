@@ -1,6 +1,11 @@
 import Foundation
 import SwiftData
 
+/// Shared currency formatter (used by both the Mac and iPhone apps).
+let currency: NumberFormatter = {
+    let f = NumberFormatter(); f.numberStyle = .currency; f.locale = .current; return f
+}()
+
 enum AccountType: String, Codable, CaseIterable { case checking, savings, creditCard, mortgage, investment, cash }
 
 /// Accounts of one type, for sectioned lists.
