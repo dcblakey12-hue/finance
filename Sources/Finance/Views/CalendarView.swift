@@ -218,7 +218,7 @@ struct CalendarView: View {
                 if let bill = bill(for: ids) { openEntry(bill, on: date) }
             }
             HStack {
-                Button("New Scheduled Transaction…") { listDay = nil; newSchedule(on: date) }
+                Button("New Scheduled Transaction…") { listDay = nil; afterDismiss { newSchedule(on: date) } }
                 Spacer()
                 Button("Done") { listDay = nil }.keyboardShortcut(.defaultAction)
             }
@@ -233,14 +233,22 @@ struct CalendarView: View {
     }
     private func openEntry(_ bill: RecurringBill, on date: Date) {
         listDay = nil
-        entering = EntryTarget(bill: bill, date: date)
+        afterDismiss { entering = EntryTarget(bill: bill, date: date) }
     }
     private func openEditor(_ bill: RecurringBill) {
         listDay = nil
-        editor = ScheduleEditor(existing: bill, draft: ScheduleDraft(
+        afterDismiss { editor = ScheduleEditor(existing: bill, draft: ScheduleDraft(
             name: bill.name, amount: abs(bill.amount), dueDay: bill.dueDay, category: bill.category, isIncome: bill.isIncome,
             isActive: bill.isActive, isTransfer: bill.isTransfer, fromAccountId: bill.fromAccountId, toAccountId: bill.toAccountId,
-            frequency: bill.rule.frequency, secondDay: bill.secondDay, startDate: bill.anchorDate, accountId: bill.accountId))
+            frequency: bill.rule.frequency, secondDay: bill.secondDay, startDate: bill.anchorDate, accountId: bill.accountId)) }
+    }
+
+    /// A sheet must finish closing before the next opens, or macOS leaves the window unclickable.
+    private func afterDismiss(_ action: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            action()
+        }
     }
 
     /// Double-click an empty day: open the Schedule Transaction window with that date filled in.
