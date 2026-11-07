@@ -309,6 +309,8 @@ enum PlaidStore {
     static func save(_ items: [PlaidItem]) {
         if let d = try? JSONEncoder().encode(items) { UserDefaults.standard.set(d, forKey: key) }
     }
+    /// Make the next sync re-download everything (used after deleting synced transactions).
+    static func resetCursors() { save(items().map { var i = $0; i.cursor = nil; return i }) }
     static func token(for itemId: String) -> String? { SecretStore.get("plaid.token.\(itemId)") }
     static func setToken(_ t: String, for itemId: String) { SecretStore.set(t, for: "plaid.token.\(itemId)") }
     static func remove(_ itemId: String) {

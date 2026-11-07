@@ -1068,3 +1068,27 @@ final class PlaidMappingTests: XCTestCase {
         XCTAssertEqual(PlaidAccountInfo(accountId: "s", name: "Sv", mask: nil, type: "depository", subtype: "savings", current: 900).appType, .savings)
     }
 }
+
+final class BulkDeleteTests: XCTestCase {
+    @MainActor
+    func testDeletingClearsPeersAndUndoesManualBalance() throws {
+        let container = try ModelContainer(for: Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                                           OFXProfile.self, CategoryRule.self, CustomCategory.self,
+                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let ctx = container.mainContext
+        let acct = Account(name: "Chk", type: .checking, accountId: "chk", bankName: "B", balance: 100)
+        ctx.insert(acct)
+        let manual = ManualTransactionService.add(to: acct, date: Date(), name: "Hand", amount: -30, in: ctx)   // balance 70
+        let bank = TransactionRecord(fitid: "F1", accountId: "chk", accountName: "Chk", date: Date(), name: "Bank", amount: -5, type: .debit)
+        let keeper = TransactionRecord(fitid: "F2", accountId: "chk", accountName: "Chk", date: Date(), name: "Keep", amount: 5, type: .credit)
+        keeper.transferPeerId = bank.id; bank.transferPeerId = keeper.id
+        ctx.insert(bank); ctx.insert(keeper); try ctx.save()
+        let all = try ctx.fetch(FetchDescriptor<TransactionRecord>())
+        let n = TransactionDeletionService.delete([manual, bank], accounts: [acct], all: all, in: ctx)
+        XCTAssertEqual(n, 2)
+        XCTAssertEqual(acct.balance, 100)                    // the manual one's -30 is undone
+        let left = try ctx.fetch(FetchDescriptor<TransactionRecord>())
+        XCTAssertEqual(left.map(\.name), ["Keep"])
+        XCTAssertNil(left.first?.transferPeerId)
+    }
+}

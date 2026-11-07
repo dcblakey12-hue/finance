@@ -400,6 +400,32 @@ struct TransactionFilters: Equatable {
     }
 }
 
+// MARK: - Bulk delete
+
+@MainActor
+enum TransactionDeletionService {
+    /// Delete transactions. Hand-entered ones also undo their effect on the account balance (imported ones
+    /// leave the bank's balance alone). Transfer links from surviving transactions are cleared.
+    /// Returns how many were deleted.
+    @discardableResult
+    static func delete(_ txs: [TransactionRecord], accounts: [Account], all: [TransactionRecord], in context: ModelContext) -> Int {
+        let ids = Set(txs.map(\.id))
+        for other in all where !ids.contains(other.id) {
+            if let peer = other.transferPeerId, ids.contains(peer) { other.transferPeerId = nil }
+        }
+        var removedPlaid = false
+        for t in txs {
+            if ManualTransactionService.isManual(t) { accounts.first { $0.accountId == t.accountId }?.balance -= t.amount }
+            if t.fitid.hasPrefix("plaid-") { removedPlaid = true }
+            context.delete(t)
+        }
+        try? context.save()
+        // Bank-synced rows only come back if the next sync starts from scratch.
+        if removedPlaid { PlaidStore.resetCursors() }
+        return txs.count
+    }
+}
+
 // MARK: - Backup & restore
 
 /// Everything in the data file as plain Codable values, so it can be saved to a file,

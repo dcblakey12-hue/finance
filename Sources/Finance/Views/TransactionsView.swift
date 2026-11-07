@@ -18,6 +18,9 @@ struct TransactionsView: View {
     @State private var newCategoryFor: TransactionRecord?
     /// Transaction we're choosing a transfer partner for.
     @State private var linkingTx: TransactionRecord?
+    /// Rows picked for bulk actions (Select All is Cmd-A in the list, or the button below).
+    @State private var selection = Set<UUID>()
+    @State private var confirmingDelete = false
 
     var filtered: [TransactionRecord] {
         transactions.filter { t in
@@ -101,7 +104,7 @@ struct TransactionsView: View {
             }
             let runningBalances = balances
             let byId = Dictionary(uniqueKeysWithValues: transactions.map { ($0.id, $0) })
-            List(filtered) { tx in
+            List(filtered, selection: $selection) { tx in
                 HStack {
                     Text(tx.date, format: .dateTime.month(.abbreviated).day().year())
                         .monospacedDigit()
@@ -159,12 +162,26 @@ struct TransactionsView: View {
                     } else {
                         Button("Link to Matching Transaction…") { linkingTx = tx }
                     }
+                    Divider()
+                    Button(selection.contains(tx.id) && selection.count > 1 ? "Delete \(selection.count) Transactions…" : "Delete Transaction…", role: .destructive) {
+                        if !selection.contains(tx.id) { selection = [tx.id] }
+                        confirmingDelete = true
+                    }
                 }
             }
+            .onDeleteCommand { if !selection.isEmpty { confirmingDelete = true } }
         }
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 16) {
                 Text("\(filtered.count) transaction\(filtered.count == 1 ? "" : "s")")
+                Button("Select All") { selection = Set(filtered.map(\.id)) }
+                    .disabled(filtered.isEmpty)
+                    .help("Select every transaction shown (Cmd-A also works in the list)")
+                if !selection.isEmpty {
+                    Text("\(selection.count) selected").foregroundStyle(.secondary)
+                    Button("Clear") { selection = [] }
+                    Button("Delete…", role: .destructive) { confirmingDelete = true }
+                }
                 Spacer()
                 HStack(spacing: 4) {
                     Text("Net shown:").foregroundStyle(.secondary)
@@ -188,6 +205,18 @@ struct TransactionsView: View {
                         .help("Return to \(backLabel)")
                 }
             }
+        }
+        .confirmationDialog("Delete \(selection.count) transaction\(selection.count == 1 ? "" : "s")?",
+                            isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                let chosen = transactions.filter { selection.contains($0.id) }
+                let n = TransactionDeletionService.delete(chosen, accounts: accounts, all: transactions, in: context)
+                selection = []
+                status = "Deleted \(n) transaction\(n == 1 ? "" : "s"). Bank-synced ones come back on the next Sync Now."
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They are removed from this Mac and, with iCloud sync, from your iPhone. This can't be undone, so use File ▸ Back Up Data first if you're unsure.")
         }
         .sheet(item: $scheduleEditor) { ed in
             ScheduleEditorSheet(editor: ed, categories: BudgetService.allCategories(stored: customCategories.map(\.name)),
