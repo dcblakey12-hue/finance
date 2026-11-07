@@ -12,7 +12,7 @@ struct CalendarView: View {
     @State private var editor: ScheduleEditor?
     @State private var listDay: Date?
     @State private var entering: EntryTarget?
-    @State private var listSelection: UUID?
+    @State private var listSelection: String?
     @State private var calService = CalendarService()
     @State private var month = Date()
     @State private var selected: Date?
@@ -41,7 +41,15 @@ struct CalendarView: View {
     private var items: [ScheduleItem] { bills.filter(\.isActive).map { $0.item(accountNames: accountNames) } }
     private var days: [CalendarDay] {
         CashCalendar.grid(month: month, schedules: items, balanceToday: startingBalance, actualNetByDay: actualNetByDay,
-                              cashAccountIds: Set(includedAccounts.map(\.accountId)))
+                              cashAccountIds: Set(includedAccounts.map(\.accountId)), ledger: ledgerEntries)
+    }
+    private var includedIds: Set<String> { Set(includedAccounts.map(\.accountId)) }
+    private var ledgerEntries: [LedgerEntry] {
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
+        return transactions.filter { $0.date >= tomorrow }.map {
+            LedgerEntry(date: $0.date, name: $0.name, amount: $0.amount, accountId: $0.accountId, category: $0.category,
+                        isTransfer: $0.transferPeerId != nil || $0.category == Categorizer.transfer)
+        }
     }
     private var lowText: String {
         guard let low = summary.low else { return "—" }
@@ -107,7 +115,7 @@ struct CalendarView: View {
 
     private var stats: some View {
         HStack(spacing: 16) {
-            stat("Balance today", money(startingBalance), .primary)
+            stat("Balance today", money(startingBalance - ledgerEntries.filter { includedIds.contains($0.accountId) }.reduce(0) { $0 + $1.amount }), .primary)
             stat("Scheduled income", money(summary.income), .green)
             stat("Scheduled bills", money(summary.expenses), .primary)
             stat("Lowest this month", lowText, (summary.low ?? 0) < 0 ? .red : .primary)
@@ -190,7 +198,7 @@ struct CalendarView: View {
     /// Click a day with transactions: a box listing them. Double-click a row to enter / amend / skip it.
     private func dayListSheet(_ date: Date) -> some View {
         let events = days.first { calendar.isDate($0.date, inSameDayAs: date) }?.events ?? []
-        let rows: [(UUID, ForecastEvent)] = events.compactMap { e in e.billId.map { ($0, e) } }
+        let rows: [(String, ForecastEvent)] = events.enumerated().map { ($1.billId?.uuidString ?? "ledger-\($0)", $1) }
         return VStack(alignment: .leading, spacing: 10) {
             Text(date.formatted(date: .complete, time: .omitted)).font(.headline)
             Text("Double-click a row to enter it (amend the amount or date) or skip it.")
@@ -209,7 +217,7 @@ struct CalendarView: View {
                 }
             }
             .frame(minHeight: 160)
-            .contextMenu(forSelectionType: UUID.self) { ids in
+            .contextMenu(forSelectionType: String.self) { ids in
                 if let bill = bill(for: ids) {
                     Button("Enter or Skip…") { openEntry(bill, on: date) }
                     Button("Edit Schedule…") { openEditor(bill) }
@@ -227,8 +235,8 @@ struct CalendarView: View {
         .frame(width: 460)
     }
 
-    private func bill(for ids: Set<UUID>) -> RecurringBill? {
-        guard ids.count == 1, let id = ids.first else { return nil }
+    private func bill(for ids: Set<String>) -> RecurringBill? {
+        guard ids.count == 1, let key = ids.first, let id = UUID(uuidString: key) else { return nil }
         return bills.first { $0.id == id }
     }
     private func openEntry(_ bill: RecurringBill, on date: Date) {

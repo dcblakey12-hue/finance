@@ -965,3 +965,27 @@ final class ScheduleAccountTests: XCTestCase {
         XCTAssertEqual(bill.item().accountId, "visa")
     }
 }
+
+final class FutureLedgerTests: XCTestCase {
+    private var cal: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c }
+    private func d(_ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: m, day: day))! }
+
+    func testFutureLedgerTransactionLandsOnItsDayAndBalanceIsNotDoubleCounted() {
+        // Balance today (Nov 7) already includes a -$200 entry dated Nov 20.
+        let entry = LedgerEntry(date: d(11, 20), name: "Dentist", amount: -200, accountId: "chk")
+        let days = CashCalendar.grid(month: d(11, 1), schedules: [], balanceToday: 800, today: d(11, 7),
+                                     cashAccountIds: ["chk"], ledger: [entry], calendar: cal)
+        func day(_ n: Int) -> CalendarDay { days.first { $0.date == d(11, n) }! }
+        XCTAssertEqual(day(20).events.map(\.name), ["Dentist"])
+        XCTAssertEqual(day(19).closing, 1000)     // balance before the entry
+        XCTAssertEqual(day(20).closing, 800)
+    }
+
+    func testLedgerEntryOnUntrackedAccountIsIgnored() {
+        let entry = LedgerEntry(date: d(11, 20), name: "Card buy", amount: -50, accountId: "visa")
+        let days = CashCalendar.grid(month: d(11, 1), schedules: [], balanceToday: 800, today: d(11, 7),
+                                     cashAccountIds: ["chk"], ledger: [entry], calendar: cal)
+        XCTAssertTrue(days.allSatisfy { $0.events.isEmpty })
+        XCTAssertEqual(days.first { $0.date == d(11, 25) }?.closing, 800)
+    }
+}

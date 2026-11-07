@@ -28,7 +28,14 @@ struct CalendarTab: View {
         CashCalendar.grid(month: month,
                           schedules: bills.filter(\.isActive).map { $0.item(accountNames: names) },
                           balanceToday: startingBalance, actualNetByDay: actualNet,
-                          cashAccountIds: Set(included.map(\.accountId)))
+                          cashAccountIds: Set(included.map(\.accountId)), ledger: ledgerEntries)
+    }
+    private var ledgerEntries: [LedgerEntry] {
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
+        return transactions.filter { $0.date >= tomorrow }.map {
+            LedgerEntry(date: $0.date, name: $0.name, amount: $0.amount, accountId: $0.accountId, category: $0.category,
+                        isTransfer: $0.transferPeerId != nil || $0.category == Categorizer.transfer)
+        }
     }
     private var summary: CalendarMonthSummary { CashCalendar.summary(of: days) }
 

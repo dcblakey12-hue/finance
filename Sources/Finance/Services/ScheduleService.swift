@@ -384,6 +384,16 @@ struct CalendarMonthSummary: Equatable {
     var closing: Double?   // balance at the end of the month
 }
 
+/// A transaction already in the ledger, for showing future-dated ones on the calendar.
+struct LedgerEntry {
+    var date: Date
+    var name: String
+    var amount: Double          // signed
+    var accountId: String
+    var category: String = ""
+    var isTransfer: Bool = false
+}
+
 enum CashCalendar {
     static func clampedDay(_ d: Int) -> Int { min(max(d, 1), 28) }
 
@@ -393,7 +403,7 @@ enum CashCalendar {
     /// net of real transactions per start-of-day); with none supplied they have no balance.
     static func grid(month: Date, schedules: [ScheduleItem], balanceToday: Double, today: Date = Date(),
                      actualNetByDay: [Date: Double]? = nil, cashAccountIds: Set<String>? = nil,
-                     calendar: Calendar = .current) -> [CalendarDay] {
+                     ledger: [LedgerEntry] = [], calendar: Calendar = .current) -> [CalendarDay] {
         guard let monthInterval = calendar.dateInterval(of: .month, for: month) else { return [] }
         let first = monthInterval.start
         let daysInMonth = calendar.range(of: .day, in: .month, for: first)?.count ?? 30
@@ -406,14 +416,25 @@ enum CashCalendar {
         let totalDays = rows * 7
         let gridEnd = date(totalDays - 1, from: gridStart)
 
+        // Future-dated transactions already in the ledger are in today's balance; take them out
+        // and let them land on their own day instead.
+        let futureLedger = ledger.filter { calendar.startOfDay(for: $0.date) > todayStart }
+        func ledgerEvents(on day: Date) -> [ForecastEvent] {
+            futureLedger.filter { calendar.isDate($0.date, inSameDayAs: day) && (cashAccountIds?.contains($0.accountId) ?? true) }
+                .sorted { $0.name < $1.name }
+                .map { ForecastEvent(date: day, name: $0.name, amount: $0.amount, isIncome: $0.amount > 0 && !$0.isTransfer,
+                                     category: $0.category, isTransfer: $0.isTransfer, gross: abs($0.amount), detail: "Already entered") }
+        }
+        let futureEffect = futureLedger.filter { cashAccountIds?.contains($0.accountId) ?? true }.reduce(0) { $0 + $1.amount }
+
         // Running balance from today (or the grid start, if later) forward.
-        var running = balanceToday
+        var running = balanceToday - futureEffect
         var closingByDay: [Date: Double] = [:]
         if gridEnd >= todayStart {
             var cursor = todayStart
             let limit = calendar.dateComponents([.day], from: todayStart, to: gridEnd).day ?? 0
             for _ in 0...min(limit, 1500) {
-                running += events(on: cursor, schedules: schedules, cashAccountIds: cashAccountIds, calendar: calendar).reduce(0) { $0 + $1.amount }
+                running += (events(on: cursor, schedules: schedules, cashAccountIds: cashAccountIds, calendar: calendar) + ledgerEvents(on: cursor)).reduce(0) { $0 + $1.amount }
                 closingByDay[cursor] = running
                 cursor = date(1, from: cursor)
             }
@@ -432,7 +453,7 @@ enum CashCalendar {
         return (0..<totalDays).map { i in
             let d = date(i, from: gridStart)
             return CalendarDay(date: d, inMonth: calendar.isDate(d, equalTo: first, toGranularity: .month),
-                               events: events(on: d, schedules: schedules, cashAccountIds: cashAccountIds, calendar: calendar),
+                               events: events(on: d, schedules: schedules, cashAccountIds: cashAccountIds, calendar: calendar) + ledgerEvents(on: d),
                                closing: closingByDay[d])
         }
     }
