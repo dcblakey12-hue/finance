@@ -90,7 +90,10 @@ final class RecurringBill {
     var isActive: Bool
     var lastPaid: Date?
     // "debit" = expense/out, "credit" = income/in. Default keeps legacy rows as expenses.
-    var kindRaw: String = "debit"
+    var kindRaw: String = "debit"      // "debit" | "credit" | "transfer"
+    /// For transfers: OFX accountIds the money leaves and arrives in. Nil otherwise.
+    var fromAccountId: String? = nil
+    var toAccountId: String? = nil
 
     init(id: UUID = UUID(), name: String, amount: Double, dueDay: Int, category: String, isActive: Bool = true, isIncome: Bool = false) {
         self.id = id; self.name = name; self.amount = amount; self.dueDay = dueDay
@@ -98,8 +101,10 @@ final class RecurringBill {
         self.kindRaw = isIncome ? "credit" : "debit"
     }
     var isIncome: Bool { kindRaw == "credit" }
-    var isExpense: Bool { !isIncome }
-    var signedAmount: Double { isIncome ? abs(amount) : -abs(amount) }
+    var isTransfer: Bool { kindRaw == "transfer" }
+    var isExpense: Bool { !isIncome && !isTransfer }
+    /// + income, - expense. A transfer has no direction on its own, so this is its positive size.
+    var signedAmount: Double { isIncome || isTransfer ? abs(amount) : -abs(amount) }
 }
 
 @Model
@@ -160,10 +165,17 @@ struct ForecastEvent: Identifiable {
     let amount: Double      // signed: + income, - expense
     let isIncome: Bool
     let category: String
+    /// Moves money between your own accounts. `amount` is then its effect on the balance being
+    /// shown (maybe 0); `gross` is the size of the transfer itself.
+    let isTransfer: Bool
+    let gross: Double
+    let detail: String?     // e.g. "Checking → Visa"
 
-    init(date: Date, name: String, amount: Double, isIncome: Bool, category: String) {
+    init(date: Date, name: String, amount: Double, isIncome: Bool, category: String,
+         isTransfer: Bool = false, gross: Double? = nil, detail: String? = nil) {
         self.id = UUID(); self.date = date; self.name = name
         self.amount = amount; self.isIncome = isIncome; self.category = category
+        self.isTransfer = isTransfer; self.gross = gross ?? abs(amount); self.detail = detail
     }
 }
 

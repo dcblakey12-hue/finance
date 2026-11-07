@@ -189,7 +189,7 @@ final class CalendarService {
     /// Replace the app's events in the Finance Bills calendar with one all-day event per
     /// active scheduled transaction per month for the next `months` months. Safe to re-run:
     /// earlier synced events are removed first, so nothing is duplicated.
-    func syncBills(_ bills: [RecurringBill], months: Int = 12) throws -> Int {
+    func syncBills(_ bills: [RecurringBill], months: Int = 12, accountNames: [String: String] = [:]) throws -> Int {
         guard let cal = ensureFinanceCalendar() else { throw NSError(domain: "Calendar", code: 1, userInfo: [NSLocalizedDescriptionKey: "No calendar available"]) }
         try clearSynced()
         let calendar = Calendar.current
@@ -203,7 +203,9 @@ final class CalendarService {
                       due >= today else { continue }
                 let ev = EKEvent(eventStore: store)
                 let amount = currency.string(from: NSNumber(value: abs(bill.amount))) ?? String(format: "$%.2f", abs(bill.amount))
-                ev.title = bill.isIncome ? "\(bill.name) — +\(amount)" : "\(bill.name) — \(amount)"
+                let route = bill.item(accountNames: accountNames).detail
+                if bill.isTransfer { ev.title = "\(bill.name) — \(amount)" + (route.map { " (\($0))" } ?? "") }
+                else { ev.title = bill.isIncome ? "\(bill.name) — +\(amount)" : "\(bill.name) — \(amount)" }
                 ev.isAllDay = true
                 ev.startDate = due
                 ev.endDate = due

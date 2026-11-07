@@ -29,9 +29,11 @@ struct CalendarView: View {
         for t in transactions where ids.contains(t.accountId) { out[calendar.startOfDay(for: t.date), default: 0] += t.amount }
         return out
     }
-    private var items: [ScheduleItem] { bills.filter(\.isActive).map(\.item) }
+    private var accountNames: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
+    private var items: [ScheduleItem] { bills.filter(\.isActive).map { $0.item(accountNames: accountNames) } }
     private var days: [CalendarDay] {
-        CashCalendar.grid(month: month, schedules: items, balanceToday: startingBalance, actualNetByDay: actualNetByDay)
+        CashCalendar.grid(month: month, schedules: items, balanceToday: startingBalance, actualNetByDay: actualNetByDay,
+                              cashAccountIds: Set(includedAccounts.map(\.accountId)))
     }
     private var lowText: String {
         guard let low = summary.low else { return "—" }
@@ -133,10 +135,10 @@ struct CalendarView: View {
                 Spacer()
             }
             ForEach(day.events.prefix(3)) { e in
-                Text("\(e.name) \(shortMoney(e.amount))")
+                Text("\(e.name) \(shortMoney(e.isTransfer ? e.gross : e.amount))")
                     .font(.system(size: 10)).lineLimit(1)
                     .padding(.horizontal, 3)
-                    .background((e.isIncome ? Color.green : Color.red).opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
+                    .background((e.isTransfer ? Color.blue : (e.isIncome ? Color.green : Color.red)).opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
             }
             if day.events.count > 3 { Text("+\(day.events.count - 3) more").font(.system(size: 10)).foregroundStyle(.secondary) }
             Spacer(minLength: 0)
@@ -164,9 +166,10 @@ struct CalendarView: View {
                 ForEach(day.events) { e in
                     HStack {
                         Text(e.name)
-                        Text(e.category).font(.caption).foregroundStyle(.secondary)
+                        Text(e.detail ?? e.category).font(.caption).foregroundStyle(.secondary)
                         Spacer()
-                        Text(money(e.amount)).monospacedDigit().foregroundStyle(e.isIncome ? .green : .primary)
+                        Text(money(e.isTransfer ? e.gross : e.amount)).monospacedDigit()
+                            .foregroundStyle(e.isIncome ? .green : (e.isTransfer ? .blue : .primary))
                     }
                 }
                 if let bal = day.closing {
@@ -234,7 +237,7 @@ struct CalendarView: View {
     }
     private func sync() {
         applyName()
-        do { let n = try calService.syncBills(bills); status = "Added \(n) events to the \(calService.calendarName) calendar." }
+        do { let n = try calService.syncBills(bills, accountNames: accountNames); status = "Added \(n) events to the \(calService.calendarName) calendar." }
         catch { status = "Calendar sync failed: \(error.localizedDescription)" }
     }
     private func clear() {

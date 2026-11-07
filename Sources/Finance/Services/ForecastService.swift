@@ -29,7 +29,8 @@ enum CashFlowForecastService: Sendable {
         // `RecurringBill` / `Envelope` / `TransactionRecord` are @MainActor-isolated
         // SwiftData models. Read plain values here via Sendable DTOs to keep
         // this function pure and testable without SwiftData concurrency noise.
-        let active = bills.filter { $0.isActive }
+        // Transfers between your own accounts don't change net worth, so the forecast ignores them.
+        let active = bills.filter { $0.isActive && !$0.isTransfer }
         let plainBills = active.map { (name: $0.name, amount: abs($0.amount), dueDay: $0.dueDay, category: $0.category, isIncome: $0.isIncome) }
         let plainEnvelopes = envelopes.map { (category: $0.category, year: $0.year, month: $0.month, allocated: max(0, $0.allocated)) }
         let plainTx = transactions.filter { $0.category != Categorizer.transfer }.map { (date: $0.date, amount: $0.amount) }

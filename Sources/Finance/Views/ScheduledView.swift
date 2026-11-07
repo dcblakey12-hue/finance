@@ -5,12 +5,16 @@ import SwiftData
 struct ScheduledView: View {
     @Query(sort: \RecurringBill.dueDay) var schedules: [RecurringBill]
     @Query var customCategories: [CustomCategory]
+    @Query var accounts: [Account]
     @Environment(\.modelContext) private var context
 
     @State private var selection = Set<UUID>()
     @State private var editor: ScheduleEditor?
     @State private var pendingDelete: RecurringBill?
 
+    private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }.sorted { $0.name < $1.name } }
+    private var accountNames: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
+    private func routeText(_ s: RecurringBill) -> String { s.item(accountNames: accountNames).detail ?? "Transfer" }
     private var categories: [String] { BudgetService.allCategories(stored: customCategories.map(\.name)) }
     private var monthlyIncome: Double { schedules.filter { $0.isActive && $0.isIncome }.reduce(0) { $0 + abs($1.amount) } }
     private var monthlyBills: Double { schedules.filter { $0.isActive && $0.isExpense }.reduce(0) { $0 + abs($1.amount) } }
@@ -35,11 +39,11 @@ struct ScheduledView: View {
                         Text(s.name).foregroundStyle(s.isActive ? .primary : .secondary)
                     }
                     TableColumn("Type") { s in
-                        Text(s.isIncome ? "Income" : "Bill")
+                        Text(s.isTransfer ? "Transfer" : (s.isIncome ? "Income" : "Bill"))
                             .font(.caption.bold()).padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(s.isIncome ? Color.green.opacity(0.2) : Color.red.opacity(0.15), in: Capsule())
-                    }.width(70)
-                    TableColumn("Category") { s in Text(s.category) }
+                            .background(s.isTransfer ? Color.blue.opacity(0.18) : (s.isIncome ? Color.green.opacity(0.2) : Color.red.opacity(0.15)), in: Capsule())
+                    }.width(80)
+                    TableColumn("Category / accounts") { s in Text(s.isTransfer ? routeText(s) : s.category) }
                     TableColumn("Day") { s in Text("\(s.dueDay)").monospacedDigit() }.width(40)
                     TableColumn("Next") { s in
                         if s.isActive, let d = ScheduleService.nextDueDate(dueDay: s.dueDay, from: Date()) {
@@ -48,7 +52,7 @@ struct ScheduledView: View {
                     }.width(70)
                     TableColumn("Amount") { s in
                         Text(currency.string(from: NSNumber(value: s.signedAmount)) ?? "")
-                            .monospacedDigit().foregroundStyle(s.isIncome ? .green : .primary)
+                            .monospacedDigit().foregroundStyle(s.isIncome ? .green : (s.isTransfer ? .blue : .primary))
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }.width(100)
                     TableColumn("Active") { s in
@@ -77,7 +81,7 @@ struct ScheduledView: View {
             }
         }
         .sheet(item: $editor) { ed in
-            ScheduleEditorSheet(editor: ed, categories: categories) { result in
+            ScheduleEditorSheet(editor: ed, categories: categories, accounts: accountChoices) { result in
                 ScheduleEditor.save(result, existing: ed.existing, in: context)
                 editor = nil
             } onCancel: { editor = nil }
@@ -101,7 +105,9 @@ struct ScheduledView: View {
     }
 
     private func draft(of s: RecurringBill) -> ScheduleDraft {
-        ScheduleDraft(name: s.name, amount: abs(s.amount), dueDay: s.dueDay, category: s.category, isIncome: s.isIncome, isActive: s.isActive)
+        ScheduleDraft(name: s.name, amount: abs(s.amount), dueDay: s.dueDay, category: s.category, isIncome: s.isIncome,
+                      isActive: s.isActive, isTransfer: s.isTransfer,
+                      fromAccountId: s.fromAccountId, toAccountId: s.toAccountId)
     }
 
     private func total(_ title: String, _ value: Double, _ color: Color) -> some View {
@@ -121,13 +127,17 @@ struct ScheduleEditor: Identifiable {
 
     @MainActor
     static func save(_ d: ScheduleDraft, existing: RecurringBill?, in context: ModelContext) {
-        let category = d.isIncome ? "Income" : d.category
+        let category = d.isTransfer ? Categorizer.transfer : (d.isIncome ? "Income" : d.category)
+        let kind = d.isTransfer ? "transfer" : (d.isIncome ? "credit" : "debit")
+        let from = d.isTransfer ? d.fromAccountId : nil, to = d.isTransfer ? d.toAccountId : nil
         if let s = existing {
             s.name = d.name; s.amount = abs(d.amount); s.dueDay = d.dueDay
-            s.category = category; s.kindRaw = d.isIncome ? "credit" : "debit"; s.isActive = d.isActive
+            s.category = category; s.kindRaw = kind; s.isActive = d.isActive
+            s.fromAccountId = from; s.toAccountId = to
         } else {
             let s = RecurringBill(name: d.name, amount: abs(d.amount), dueDay: d.dueDay, category: category,
-                                  isActive: d.isActive, isIncome: d.isIncome)
+                                  isActive: d.isActive, isIncome: d.isIncome && !d.isTransfer)
+            s.kindRaw = kind; s.fromAccountId = from; s.toAccountId = to
             context.insert(s)
         }
         try? context.save()
@@ -136,9 +146,15 @@ struct ScheduleEditor: Identifiable {
     }
 }
 
+struct AccountChoice: Identifiable, Hashable {
+    let id: String      // OFX accountId
+    let name: String
+}
+
 struct ScheduleEditorSheet: View {
     let editor: ScheduleEditor
     let categories: [String]
+    let accounts: [AccountChoice]
     let onSave: (ScheduleDraft) -> Void
     let onCancel: () -> Void
 
@@ -148,22 +164,46 @@ struct ScheduleEditorSheet: View {
     private var parsedAmount: Double? {
         Double(amountText.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: ""))
     }
-    private var canSave: Bool { !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && (parsedAmount ?? 0) > 0 }
+    private var transferOK: Bool {
+        !draft.isTransfer || (draft.fromAccountId != nil && draft.toAccountId != nil && draft.fromAccountId != draft.toAccountId)
+    }
+    private var canSave: Bool { !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && (parsedAmount ?? 0) > 0 && transferOK }
+    /// 0 = bill, 1 = income, 2 = transfer
+    private var kind: Binding<Int> {
+        Binding(get: { draft.isTransfer ? 2 : (draft.isIncome ? 1 : 0) },
+                set: { draft.isTransfer = $0 == 2; draft.isIncome = $0 == 1 })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(editor.existing == nil ? "Schedule Transaction" : "Edit Scheduled Transaction").font(.headline)
-            Picker("Type", selection: $draft.isIncome) {
-                Text("Bill (expense)").tag(false)
-                Text("Income (payday)").tag(true)
+            Picker("Type", selection: kind) {
+                Text("Bill").tag(0)
+                Text("Income").tag(1)
+                Text("Transfer").tag(2)
             }.pickerStyle(.segmented).labelsHidden()
             Form {
                 TextField("Name", text: $draft.name)
                 TextField("Amount", text: $amountText)
-                Picker(draft.isIncome ? "Payday" : "Due day", selection: $draft.dueDay) {
+                Picker(draft.isIncome ? "Payday" : (draft.isTransfer ? "Day" : "Due day"), selection: $draft.dueDay) {
                     ForEach(1...28, id: \.self) { Text(ordinal($0)).tag($0) }
                 }
-                if !draft.isIncome {
+                if draft.isTransfer {
+                    Picker("From account", selection: $draft.fromAccountId) {
+                        Text("Choose…").tag(String?.none)
+                        ForEach(accounts) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                    Picker("To account", selection: $draft.toAccountId) {
+                        Text("Choose…").tag(String?.none)
+                        ForEach(accounts) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                    if accounts.count < 2 {
+                        Text("Add at least two accounts (Accounts → Add or import a file) to schedule a transfer.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if draft.fromAccountId != nil && draft.fromAccountId == draft.toAccountId {
+                        Text("Pick two different accounts.").font(.caption).foregroundStyle(.red)
+                    }
+                } else if !draft.isIncome {
                     Picker("Category", selection: $draft.category) {
                         ForEach(Array(Set(categories + [draft.category])).sorted(), id: \.self) { Text($0).tag($0) }
                     }
@@ -171,7 +211,8 @@ struct ScheduleEditorSheet: View {
                 Toggle("Active", isOn: $draft.isActive)
             }
             .formStyle(.grouped)
-            Text("Repeats monthly on that day. Days are capped at the 28th so every month has one.")
+            Text(draft.isTransfer ? "Moves money between two of your accounts every month. It doesn't count as income or spending, and it shows on the calendar."
+                                     : "Repeats monthly on that day. Days are capped at the 28th so every month has one.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
@@ -179,7 +220,9 @@ struct ScheduleEditorSheet: View {
                 Button(editor.existing == nil ? "Schedule" : "Save") {
                     var d = draft; d.amount = parsedAmount ?? 0
                     d.name = d.name.trimmingCharacters(in: .whitespaces)
-                    if d.isIncome { d.category = "Income" } else if d.category == "Income" { d.category = "Other" }
+                    if d.isTransfer { d.category = Categorizer.transfer; d.isIncome = false }
+                    else if d.isIncome { d.category = "Income" }
+                    else if d.category == "Income" || d.category == Categorizer.transfer { d.category = "Other" }
                     onSave(d)
                 }
                 .buttonStyle(.borderedProminent)

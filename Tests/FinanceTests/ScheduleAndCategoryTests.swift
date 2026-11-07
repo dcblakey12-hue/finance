@@ -539,3 +539,60 @@ final class CashCalendarPastBalanceTests: XCTestCase {
         XCTAssertEqual(closing(1), 600)
     }
 }
+
+final class ScheduledTransferTests: XCTestCase {
+    private var cal: Calendar = {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c
+    }()
+    private func d(_ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: m, day: day))! }
+    private let cardPayment = ScheduleItem(name: "Visa payment", amount: 400, dueDay: 10, category: "Transfer",
+                                           isTransfer: true, fromAccountId: "chk", toAccountId: "visa", detail: "Checking → Visa")
+
+    func testTransferOutOfTrackedAccountReducesBalance() {
+        XCTAssertEqual(CashCalendar.balanceEffect(of: cardPayment, cashAccountIds: ["chk", "sav"]), -400)
+    }
+    func testTransferBetweenTrackedAccountsIsNeutral() {
+        XCTAssertEqual(CashCalendar.balanceEffect(of: cardPayment, cashAccountIds: ["chk", "visa"]), 0)
+    }
+    func testTransferIntoTrackedAccountAddsBalance() {
+        let sweep = ScheduleItem(name: "Sweep", amount: 100, dueDay: 1, category: "Transfer",
+                                 isTransfer: true, fromAccountId: "other", toAccountId: "chk")
+        XCTAssertEqual(CashCalendar.balanceEffect(of: sweep, cashAccountIds: ["chk"]), 100)
+    }
+
+    func testCalendarShowsTransferButItIsNotIncomeOrSpending() {
+        let days = CashCalendar.grid(month: d(11, 1), schedules: [cardPayment], balanceToday: 1000, today: d(11, 7),
+                                     cashAccountIds: ["chk"], calendar: cal)
+        let day = days.first { $0.date == d(11, 10) }!
+        XCTAssertEqual(day.events.count, 1)
+        XCTAssertEqual(day.events[0].gross, 400)
+        XCTAssertEqual(day.closing, 600)
+        let s = CashCalendar.summary(of: days, today: d(11, 7), calendar: cal)
+        XCTAssertEqual(s.income, 0); XCTAssertEqual(s.expenses, 0)
+        XCTAssertEqual(s.closing, 600)
+    }
+
+    func testBudgetIgnoresTransfers() {
+        XCTAssertTrue(BudgetSync.scheduledExpenses([cardPayment]).isEmpty)
+        XCTAssertEqual(BudgetSync.scheduledIncome([cardPayment]), 0)
+    }
+
+    func testDraftFromLinkedTransferPrefillsAccounts() {
+        let draft = ScheduleService.draft(fromName: "VISA PAYMENT", amount: -400, date: d(11, 10), category: "Transfer",
+                                          transferFrom: "chk", transferTo: "visa", calendar: cal)
+        XCTAssertTrue(draft.isTransfer)
+        XCTAssertEqual(draft.fromAccountId, "chk"); XCTAssertEqual(draft.toAccountId, "visa")
+        XCTAssertEqual(draft.amount, 400); XCTAssertEqual(draft.category, "Transfer"); XCTAssertEqual(draft.dueDay, 10)
+    }
+
+    func testForecastIgnoresTransferSchedules() {
+        let bill = RecurringBill(name: "Visa payment", amount: 400, dueDay: 10, category: "Transfer")
+        bill.kindRaw = "transfer"; bill.fromAccountId = "chk"; bill.toAccountId = "visa"
+        XCTAssertTrue(bill.isTransfer); XCTAssertFalse(bill.isExpense); XCTAssertFalse(bill.isIncome)
+        XCTAssertEqual(bill.item(accountNames: ["chk": "Checking", "visa": "Visa"]).detail, "Checking → Visa")
+        let months = CashFlowForecastService.forecast(bills: [bill], envelopes: [], transactions: [],
+            options: ForecastOptions(months: 2, includeEnvelopes: false, fallbackAverageVariable: false,
+                                     inferIncomeFromHistory: false, startingBalance: 1000))
+        XCTAssertEqual(months.last?.closingBalance, 1000)
+    }
+}
