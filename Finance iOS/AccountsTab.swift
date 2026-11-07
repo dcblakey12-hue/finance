@@ -5,16 +5,11 @@ struct AccountsTab: View {
     @Query(sort: \Account.name) private var accounts: [Account]
 
     private var groups: [AccountGroup<Account>] { AccountType.grouped(accounts, by: { $0.type }) }
-    private var netWorth: Double { accounts.reduce(0) { $0 + $1.balance } }
     private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
 
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    HStack { Text("Net worth").font(.headline); Spacer()
-                        Text(money(netWorth)).font(.headline).monospacedDigit() }
-                }
                 ForEach(groups, id: \.type) { group in
                     Section {
                         ForEach(group.items) { a in
