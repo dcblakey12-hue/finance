@@ -596,3 +596,45 @@ final class ScheduledTransferTests: XCTestCase {
         XCTAssertEqual(months.last?.closingBalance, 1000)
     }
 }
+
+@MainActor
+final class DedupeServiceTests: XCTestCase {
+    private var context: ModelContext!
+    override func setUp() async throws {
+        let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        context = ModelContext(container)
+    }
+    private func count<T: PersistentModel>(_ t: T.Type) -> Int { (try? context.fetch(FetchDescriptor<T>()).count) ?? -1 }
+
+    func testMergesDuplicatesAndKeepsTransferLinks() {
+        func tx(_ fit: String, _ acct: String, _ amount: Double) -> TransactionRecord {
+            let t = TransactionRecord(fitid: fit, accountId: acct, accountName: acct, date: Date(), name: "x", amount: amount, type: .debit)
+            context.insert(t); return t
+        }
+        let a1 = tx("F1", "chk", -50), a2 = tx("F1", "chk", -50)      // same import on two devices
+        let peer = tx("F2", "visa", 50)
+        a2.transferPeerId = peer.id; peer.transferPeerId = a2.id        // link was made against the duplicate
+        context.insert(Account(name: "Checking", type: .checking, accountId: "chk", bankName: "B"))
+        context.insert(Account(name: "Checking", type: .checking, accountId: "chk", bankName: "B"))
+        context.insert(CategoryRule(merchantKey: "shell", category: "Auto"))
+        context.insert(CategoryRule(merchantKey: "shell", category: "Auto"))
+        context.insert(CustomCategory(name: "Pets")); context.insert(CustomCategory(name: "Pets"))
+        context.insert(Envelope(category: "Food", year: 2026, month: 11, allocated: 300))
+        context.insert(Envelope(category: "Food", year: 2026, month: 11, allocated: 500))
+
+        XCTAssertEqual(DedupeService.run(in: context), 5)
+        XCTAssertEqual(count(TransactionRecord.self), 2)
+        XCTAssertEqual(count(Account.self), 1); XCTAssertEqual(count(CategoryRule.self), 1)
+        XCTAssertEqual(count(CustomCategory.self), 1)
+        XCTAssertEqual(try! context.fetch(FetchDescriptor<Envelope>()).first?.allocated, 500)
+
+        let kept = try! context.fetch(FetchDescriptor<TransactionRecord>()).first { $0.fitid == "F1" }!
+        let peerNow = try! context.fetch(FetchDescriptor<TransactionRecord>()).first { $0.fitid == "F2" }!
+        XCTAssertEqual(kept.transferPeerId, peerNow.id)
+        XCTAssertEqual(peerNow.transferPeerId, kept.id)
+        _ = a1
+        XCTAssertEqual(DedupeService.run(in: context), 0)              // idempotent
+    }
+}

@@ -8,10 +8,10 @@ import SwiftData
 /// "STARBUCKS #1234 SEATTLE WA" and "Starbucks 0099" share one rule.
 @Model
 final class CategoryRule {
-    @Attribute(.unique) var merchantKey: String
-    var category: String
-    var createdAt: Date
-    var updatedAt: Date
+    var merchantKey: String = ""
+    var category: String = ""
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
 
     init(merchantKey: String, category: String, now: Date = Date()) {
         self.merchantKey = merchantKey; self.category = category
@@ -389,5 +389,68 @@ enum TransferLinkService {
         tx.category = Categorizer.uncategorized
         other?.category = Categorizer.uncategorized
         try? context.save()
+    }
+}
+
+
+// MARK: - Duplicate cleanup (needed once data syncs between devices)
+
+/// iCloud sync can't enforce unique constraints, so two devices may each create the same
+/// account, rule, category, envelope or imported transaction. This merges such duplicates,
+/// choosing the survivor deterministically (smallest id) so every device converges on the
+/// same records. Safe to run on every launch; returns how many duplicates were removed.
+@MainActor
+enum DedupeService {
+    @discardableResult
+    static func run(in context: ModelContext) -> Int {
+        var removed = 0
+        func fetch<T: PersistentModel>(_ type: T.Type) -> [T] { (try? context.fetch(FetchDescriptor<T>())) ?? [] }
+
+        // Transactions: same account + FITID. Re-point transfer links from removed rows to the survivor.
+        let txs = fetch(TransactionRecord.self).sorted { $0.id.uuidString < $1.id.uuidString }
+        var keepTx: [String: TransactionRecord] = [:]
+        var replaced: [UUID: UUID] = [:]
+        for t in txs {
+            let key = "\(t.accountId)|\(t.fitid)"
+            if t.fitid.isEmpty { continue }
+            if let keep = keepTx[key] {
+                replaced[t.id] = keep.id
+                if keep.transferPeerId == nil { keep.transferPeerId = t.transferPeerId }
+                if keep.category == Categorizer.uncategorized { keep.category = t.category }
+                context.delete(t); removed += 1
+            } else { keepTx[key] = t }
+        }
+        if !replaced.isEmpty {
+            for t in txs where replaced[t.id] == nil {
+                if let p = t.transferPeerId, let r = replaced[p] { t.transferPeerId = r }
+            }
+        }
+
+        // Accounts by OFX account id.
+        var seenAccounts = Set<String>()
+        for a in fetch(Account.self).sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            if !seenAccounts.insert(a.accountId).inserted { context.delete(a); removed += 1 }
+        }
+        // Rules by merchant: keep the most recently updated.
+        var rules: [String: CategoryRule] = [:]
+        for r in fetch(CategoryRule.self).sorted(by: { ($0.updatedAt, $1.merchantKey) > ($1.updatedAt, $0.merchantKey) }) {
+            if rules[r.merchantKey] == nil { rules[r.merchantKey] = r } else { context.delete(r); removed += 1 }
+        }
+        // Custom categories by name.
+        var names = Set<String>()
+        for c in fetch(CustomCategory.self).sorted(by: { ($0.createdAt, $0.name) < ($1.createdAt, $1.name) }) {
+            if !names.insert(c.name).inserted { context.delete(c); removed += 1 }
+        }
+        // Envelopes by category + month: keep the largest allocation.
+        var envs: [String: Envelope] = [:]
+        for e in fetch(Envelope.self).sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            let key = e.key
+            if let keep = envs[key] {
+                keep.allocated = max(keep.allocated, e.allocated)
+                context.delete(e); removed += 1
+            } else { envs[key] = e }
+        }
+        if removed > 0 { try? context.save() }
+        return removed
     }
 }

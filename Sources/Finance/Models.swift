@@ -26,12 +26,12 @@ enum TransactionType: String, Codable { case debit, credit }
 
 @Model
 final class Account {
-    @Attribute(.unique) var id: UUID
-    var name: String
-    var typeRaw: String
-    var accountId: String  // OFX ACCTID
-    var bankName: String
-    var balance: Double
+    var id: UUID = UUID()
+    var name: String = ""
+    var typeRaw: String = "checking"
+    var accountId: String = ""  // OFX ACCTID
+    var bankName: String = ""
+    var balance: Double = 0
 
     init(id: UUID = UUID(), name: String, type: AccountType, accountId: String, bankName: String, balance: Double = 0) {
         self.id = id; self.name = name; self.typeRaw = type.rawValue
@@ -42,16 +42,16 @@ final class Account {
 
 @Model
 final class TransactionRecord {
-    @Attribute(.unique) var id: UUID
-    var fitid: String       // OFX FITID - unique per bank/account
-    var accountId: String
-    var accountName: String
-    var date: Date
-    var name: String
-    var amount: Double
-    var typeRaw: String
-    var category: String
-    var memo: String
+    var id: UUID = UUID()
+    var fitid: String = ""       // OFX FITID - unique per bank/account (enforced by import + DedupeService)
+    var accountId: String = ""
+    var accountName: String = ""
+    var date: Date = Date()
+    var name: String = ""
+    var amount: Double = 0
+    var typeRaw: String = "debit"
+    var category: String = "Uncategorized"
+    var memo: String = ""
     /// The other side of a transfer between two of your accounts (e.g. the card payment
     /// that matches a bank debit). Nil when not linked.
     var transferPeerId: UUID? = nil
@@ -68,11 +68,11 @@ final class TransactionRecord {
 // Envelope budgeting: one allocation per category per month.
 @Model
 final class Envelope {
-    @Attribute(.unique) var id: UUID
-    var category: String
-    var year: Int
-    var month: Int
-    var allocated: Double
+    var id: UUID = UUID()
+    var category: String = ""
+    var year: Int = 0
+    var month: Int = 0
+    var allocated: Double = 0
 
     init(id: UUID = UUID(), category: String, year: Int, month: Int, allocated: Double) {
         self.id = id; self.category = category; self.year = year; self.month = month; self.allocated = allocated
@@ -82,12 +82,12 @@ final class Envelope {
 
 @Model
 final class RecurringBill {
-    @Attribute(.unique) var id: UUID
-    var name: String
-    var amount: Double
-    var dueDay: Int          // 1..28 (avoid month-end edge cases for v1)
-    var category: String
-    var isActive: Bool
+    var id: UUID = UUID()
+    var name: String = ""
+    var amount: Double = 0
+    var dueDay: Int = 1          // 1..28 (avoid month-end edge cases for v1)
+    var category: String = ""
+    var isActive: Bool = true
     var lastPaid: Date?
     // "debit" = expense/out, "credit" = income/in. Default keeps legacy rows as expenses.
     var kindRaw: String = "debit"      // "debit" | "credit" | "transfer"
@@ -109,12 +109,12 @@ final class RecurringBill {
 
 @Model
 final class OFXProfile {
-    @Attribute(.unique) var id: UUID
-    var bankName: String
-    var ofxHomeURL: String   // e.g. https://ofx.example.com/OFXHome.axd
-    var username: String
-    var accountId: String
-    var clientUID: String    // generated per profile
+    var id: UUID = UUID()
+    var bankName: String = ""
+    var ofxHomeURL: String = ""   // e.g. https://ofx.example.com/OFXHome.axd
+    var username: String = ""
+    var accountId: String = ""
+    var clientUID: String = ""    // generated per profile
     var lastSync: Date?
 
     init(id: UUID = UUID(), bankName: String, ofxHomeURL: String, username: String, accountId: String) {
@@ -227,8 +227,8 @@ struct ForecastOptions {
 /// A category the user added on top of `BudgetService.defaultCategories`.
 @Model
 final class CustomCategory {
-    @Attribute(.unique) var name: String
-    var createdAt: Date
+    var name: String = ""
+    var createdAt: Date = Date()
 
     init(name: String, createdAt: Date = Date()) {
         self.name = name; self.createdAt = createdAt

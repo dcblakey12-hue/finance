@@ -63,7 +63,10 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 600)
-        .task { CategoryService.seedIfNeeded(in: context) }
+        .task {
+            CategoryService.seedIfNeeded(in: context)
+            DedupeService.run(in: context)
+        }
         .onChange(of: selection) { _, new in
             // Opening Transactions from the sidebar starts unfiltered; a drill-down keeps its filters.
             if new == .transactions && !isDrillDown {
