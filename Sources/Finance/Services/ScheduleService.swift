@@ -158,6 +158,8 @@ struct ScheduleDraft: Equatable {
     var frequency: ScheduleFrequency = .monthly
     var secondDay: Int = 15
     var startDate: Date? = nil
+    /// The account (OFX accountId) a bill is paid from or a payday arrives in. Not used for transfers.
+    var accountId: String? = nil
 
     var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: startDate) }
     /// Valid when the chosen pattern is complete (twice a month needs two different days).
@@ -168,6 +170,7 @@ enum ScheduleService {
     /// Pre-fill a schedule from an existing transaction: same merchant, amount,
     /// and day of month (clamped to 28, the latest day every month has).
     static func draft(fromName name: String, amount: Double, date: Date, category: String,
+                      accountId: String? = nil,
                       transferFrom: String? = nil, transferTo: String? = nil,
                       calendar: Calendar = .current) -> ScheduleDraft {
         let isIncome = amount > 0
@@ -183,8 +186,10 @@ enum ScheduleService {
         if isIncome { cat = "Income" }
         else if category == Categorizer.uncategorized { cat = "Other" }
         else { cat = category }
-        return ScheduleDraft(name: displayName, amount: abs(amount), dueDay: min(max(day, 1), 28),
-                             category: cat, isIncome: isIncome)
+        var d = ScheduleDraft(name: displayName, amount: abs(amount), dueDay: min(max(day, 1), 28),
+                              category: cat, isIncome: isIncome)
+        d.accountId = accountId
+        return d
     }
 
     /// Create or update a scheduled transaction from a draft, then make sure its category's
@@ -199,12 +204,14 @@ enum ScheduleService {
             s.category = category; s.kindRaw = kind; s.isActive = d.isActive
             s.fromAccountId = from; s.toAccountId = to
             s.frequencyRaw = d.frequency.rawValue; s.secondDay = d.secondDay; s.anchorDate = d.startDate
+            s.accountId = d.isTransfer ? nil : d.accountId
         } else {
             let s = RecurringBill(name: d.name, amount: abs(d.amount), dueDay: d.dueDay, category: category,
                                   isActive: d.isActive, isIncome: d.isIncome && !d.isTransfer)
             s.kindRaw = kind; s.fromAccountId = from; s.toAccountId = to
             s.frequencyRaw = d.frequency.rawValue; s.secondDay = d.secondDay; s.anchorDate = d.startDate
             s.trackedSince = Calendar.current.startOfDay(for: Date())
+            s.accountId = d.isTransfer ? nil : d.accountId
             context.insert(s)
         }
         try? context.save()
@@ -349,6 +356,8 @@ struct ScheduleItem: Equatable {
     var secondDay: Int = 15
     var anchor: Date? = nil
     var excluded: Set<Date> = []
+    /// The account a bill/payday belongs to (nil = unspecified).
+    var accountId: String? = nil
     var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: anchor, excluded: excluded) }
     /// Average amount per month (signed), counting every repeat.
     var monthlyAmount: Double { amount * rule.monthlyFactor }
@@ -429,7 +438,11 @@ enum CashCalendar {
     /// How a scheduled item changes the balance of the accounts being tracked (`cashAccountIds`).
     /// A transfer only matters when exactly one side is tracked: money leaving or arriving.
     static func balanceEffect(of item: ScheduleItem, cashAccountIds: Set<String>?) -> Double {
-        guard item.isTransfer else { return item.amount }
+        guard item.isTransfer else {
+            // A bill or payday only moves the tracked balance if its account is one of the tracked ones.
+            if let acct = item.accountId, let cash = cashAccountIds, !cash.contains(acct) { return 0 }
+            return item.amount
+        }
         guard let cash = cashAccountIds, let from = item.fromAccountId, let to = item.toAccountId else { return 0 }
         let size = abs(item.amount)
         switch (cash.contains(from), cash.contains(to)) {
@@ -472,7 +485,8 @@ extension RecurringBill {
         }
         return ScheduleItem(name: name, amount: signedAmount, dueDay: dueDay, category: category,
                             isTransfer: isTransfer, fromAccountId: fromAccountId, toAccountId: toAccountId, detail: detail,
-                            frequency: rule.frequency, secondDay: secondDay, anchor: anchorDate, excluded: rule.excluded)
+                            frequency: rule.frequency, secondDay: secondDay, anchor: anchorDate, excluded: rule.excluded,
+                            accountId: accountId)
     }
     var item: ScheduleItem { item() }
 

@@ -937,3 +937,31 @@ final class OverdueTests: XCTestCase {
         XCTAssertTrue(ScheduleService.overdue([bill]).isEmpty)
     }
 }
+
+@MainActor
+final class ScheduleAccountTests: XCTestCase {
+    func testBillOnUntrackedAccountDoesNotMoveCashBalance() {
+        let onCard = ScheduleItem(name: "Netflix", amount: -15, dueDay: 5, category: "Entertainment", accountId: "visa")
+        let onChecking = ScheduleItem(name: "Rent", amount: -1000, dueDay: 5, category: "Housing", accountId: "chk")
+        let unassigned = ScheduleItem(name: "Misc", amount: -20, dueDay: 5, category: "Other")
+        let cash: Set<String> = ["chk", "sav"]
+        XCTAssertEqual(CashCalendar.balanceEffect(of: onCard, cashAccountIds: cash), 0)
+        XCTAssertEqual(CashCalendar.balanceEffect(of: onChecking, cashAccountIds: cash), -1000)
+        XCTAssertEqual(CashCalendar.balanceEffect(of: unassigned, cashAccountIds: cash), -20)       // no account: counts, as before
+        XCTAssertEqual(CashCalendar.balanceEffect(of: onCard, cashAccountIds: cash.union(["visa"])), -15)
+        XCTAssertEqual(CashCalendar.balanceEffect(of: onCard, cashAccountIds: nil), -15)
+    }
+
+    func testSaveStoresAccountAndTransactionDraftCarriesIt() throws {
+        let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        let context = ModelContext(container)
+        let draft = ScheduleService.draft(fromName: "NETFLIX.COM", amount: -15.49, date: Date(), category: "Entertainment", accountId: "visa")
+        XCTAssertEqual(draft.accountId, "visa")
+        ScheduleService.save(draft, existing: nil, in: context)
+        let bill = try XCTUnwrap(try context.fetch(FetchDescriptor<RecurringBill>()).first)
+        XCTAssertEqual(bill.accountId, "visa")
+        XCTAssertEqual(bill.item().accountId, "visa")
+    }
+}

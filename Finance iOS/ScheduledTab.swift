@@ -43,7 +43,8 @@ struct ScheduledTab: View {
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(s.name).foregroundStyle(s.isActive ? Color.primary : .secondary)
-                                Text(s.isTransfer ? (s.item(accountNames: names).detail ?? "Transfer") : s.category)
+                                Text(s.isTransfer ? (s.item(accountNames: names).detail ?? "Transfer")
+                                     : (names[s.accountId ?? ""].map { "\(s.category) • \($0)" } ?? s.category))
                                     .font(.caption).foregroundStyle(.secondary)
                                 if s.isActive, let d = s.rule.nextDate(from: Date()) {
                                     Text("\(s.rule.summary()) • next \(d.formatted(.dateTime.month(.abbreviated).day().year()))")
@@ -112,7 +113,8 @@ struct ScheduleForm: View {
     private var canSave: Bool {
         !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && amount > 0 &&
         (!draft.isTransfer || (draft.fromAccountId != nil && draft.toAccountId != nil && draft.fromAccountId != draft.toAccountId)) &&
-        draft.scheduleIsValid
+        draft.scheduleIsValid &&
+        (draft.isTransfer || accounts.isEmpty || draft.accountId != nil)
     }
     private var startDateBinding: Binding<Date> {
         Binding(get: { draft.startDate ?? Date() }, set: { draft.startDate = $0 })
@@ -159,6 +161,12 @@ struct ScheduleForm: View {
                         ForEach(Array(Set(categories + [draft.category])).sorted(), id: \.self) { Text($0).tag($0) }
                     }
                 }
+                if !draft.isTransfer && !accounts.isEmpty {
+                    Picker(draft.isIncome ? "Deposited to" : "Paid from", selection: $draft.accountId) {
+                        Text("Choose…").tag(String?.none)
+                        ForEach(accounts) { Text($0.name).tag(Optional($0.accountId)) }
+                    }
+                }
                 Toggle("Active", isOn: $draft.isActive)
             }
             .navigationTitle(existing == nil ? "New Scheduled" : "Edit Scheduled")
@@ -185,9 +193,11 @@ struct ScheduleForm: View {
                 draft = ScheduleDraft(name: s.name, amount: abs(s.amount), dueDay: s.dueDay, category: s.category,
                                       isIncome: s.isIncome, isActive: s.isActive, isTransfer: s.isTransfer,
                                       fromAccountId: s.fromAccountId, toAccountId: s.toAccountId,
-                                      frequency: s.rule.frequency, secondDay: s.secondDay, startDate: s.anchorDate)
+                                      frequency: s.rule.frequency, secondDay: s.secondDay, startDate: s.anchorDate,
+                                      accountId: s.accountId)
                 amountText = String(format: "%.2f", abs(s.amount))
             }
+            if draft.accountId == nil && !draft.isTransfer { draft.accountId = accounts.first?.accountId }
         }
     }
 }

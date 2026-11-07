@@ -143,6 +143,7 @@ struct TransactionsView: View {
                         let out = tx.amount < 0 ? tx : peer, into = tx.amount < 0 ? peer : tx
                         scheduleEditor = ScheduleEditor(existing: nil, draft: ScheduleService.draft(
                             fromName: tx.name, amount: tx.amount, date: tx.date, category: tx.category,
+                            accountId: tx.accountId,
                             transferFrom: peer == nil ? nil : out?.accountId,
                             transferTo: peer == nil ? nil : into?.accountId))
                     }

@@ -47,7 +47,10 @@ struct ScheduledView: View {
                             .font(.caption.bold()).padding(.horizontal, 6).padding(.vertical, 2)
                             .background(s.isTransfer ? Color.blue.opacity(0.18) : (s.isIncome ? Color.green.opacity(0.2) : Color.red.opacity(0.15)), in: Capsule())
                     }.width(80)
-                    TableColumn("Category / accounts") { s in Text(s.isTransfer ? routeText(s) : s.category) }
+                    TableColumn("Category / accounts") { s in
+                        Text(s.isTransfer ? routeText(s)
+                             : (accountNames[s.accountId ?? ""].map { "\(s.category) • \($0)" } ?? s.category))
+                    }
                     TableColumn("Repeats") { s in Text(s.rule.summary()) }.width(min: 130, ideal: 170)
                     TableColumn("Next due") { s in
                         if s.isActive, let d = s.rule.nextDate(from: Date()) {
@@ -175,7 +178,8 @@ struct ScheduledView: View {
         ScheduleDraft(name: s.name, amount: abs(s.amount), dueDay: s.dueDay, category: s.category, isIncome: s.isIncome,
                       isActive: s.isActive, isTransfer: s.isTransfer,
                       fromAccountId: s.fromAccountId, toAccountId: s.toAccountId,
-                      frequency: s.rule.frequency, secondDay: s.secondDay, startDate: s.anchorDate)
+                      frequency: s.rule.frequency, secondDay: s.secondDay, startDate: s.anchorDate,
+                      accountId: s.accountId)
     }
 
     private func total(_ title: String, _ value: Double, _ color: Color) -> some View {
@@ -220,8 +224,10 @@ struct ScheduleEditorSheet: View {
     private var transferOK: Bool {
         !draft.isTransfer || (draft.fromAccountId != nil && draft.toAccountId != nil && draft.fromAccountId != draft.toAccountId)
     }
+    private var accountOK: Bool { draft.isTransfer || accounts.isEmpty || draft.accountId != nil }
     private var canSave: Bool {
-        !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && (parsedAmount ?? 0) > 0 && transferOK && draft.scheduleIsValid
+        !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && (parsedAmount ?? 0) > 0 && transferOK
+            && draft.scheduleIsValid && accountOK
     }
     private var startDateBinding: Binding<Date> {
         Binding(get: { draft.startDate ?? Date() }, set: { draft.startDate = $0 })
@@ -284,6 +290,12 @@ struct ScheduleEditorSheet: View {
                         ForEach(Array(Set(categories + [draft.category])).sorted(), id: \.self) { Text($0).tag($0) }
                     }
                 }
+                if !draft.isTransfer && !accounts.isEmpty {
+                    Picker(draft.isIncome ? "Deposited to" : "Paid from", selection: $draft.accountId) {
+                        Text("Choose…").tag(String?.none)
+                        ForEach(accounts) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                }
                 Toggle("Active", isOn: $draft.isActive)
             }
             .formStyle(.grouped)
@@ -312,6 +324,10 @@ struct ScheduleEditorSheet: View {
         .frame(width: 420)
         .onAppear {
             draft = editor.draft
+            if draft.accountId == nil && !draft.isTransfer {
+                // Default to a checking-type account the first time (accounts are listed by name).
+                draft.accountId = accounts.first?.id
+            }
             amountText = editor.draft.amount > 0 ? String(format: "%.2f", editor.draft.amount) : ""
         }
     }
