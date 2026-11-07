@@ -7,6 +7,9 @@ struct CalendarView: View {
     @Query(sort: \RecurringBill.dueDay) var bills: [RecurringBill]
     @Query var accounts: [Account]
     @Query var transactions: [TransactionRecord]
+    @Query var customCategories: [CustomCategory]
+    @Environment(\.modelContext) private var context
+    @State private var editor: ScheduleEditor?
     @State private var calService = CalendarService()
     @State private var month = Date()
     @State private var selected: Date?
@@ -30,6 +33,8 @@ struct CalendarView: View {
         return out
     }
     private var accountNames: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
+    private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }.sorted { $0.name < $1.name } }
+    private var categories: [String] { BudgetService.allCategories(stored: customCategories.map(\.name)) }
     private var items: [ScheduleItem] { bills.filter(\.isActive).map { $0.item(accountNames: accountNames) } }
     private var days: [CalendarDay] {
         CashCalendar.grid(month: month, schedules: items, balanceToday: startingBalance, actualNetByDay: actualNetByDay,
@@ -68,6 +73,12 @@ struct CalendarView: View {
         }
         .navigationTitle("Bills & Calendar")
         .task { await calService.requestAccess() }
+        .sheet(item: $editor) { ed in
+            ScheduleEditorSheet(editor: ed, categories: categories, accounts: accountChoices) { result in
+                ScheduleEditor.save(result, existing: ed.existing, in: context)
+                editor = nil
+            } onCancel: { editor = nil }
+        }
     }
 
     // MARK: - Pieces
@@ -154,7 +165,16 @@ struct CalendarView: View {
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(isSelected ? Color.accentColor : .clear, lineWidth: 2))
         .opacity(day.inMonth ? 1 : 0.5)
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) { selected = day.date; newSchedule(on: day.date) }
         .onTapGesture { selected = day.date }
+    }
+
+    /// Double-click a day: open the Schedule Transaction window with that date filled in.
+    private func newSchedule(on date: Date) {
+        let day = calendar.component(.day, from: date)
+        let draft = ScheduleDraft(name: "", amount: 0, dueDay: min(day, 28), category: "Other", isIncome: false,
+                                  startDate: calendar.startOfDay(for: date))
+        editor = ScheduleEditor(existing: nil, draft: draft)
     }
 
     private func dayDetail(_ date: Date) -> some View {
