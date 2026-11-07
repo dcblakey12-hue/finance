@@ -33,8 +33,16 @@ struct ImportView: View {
                     if let p = preview {
                         Text("Found \(p.transactions.count) transactions — \(p.accountName) (•••\(p.accountId.suffix(4))) • Bank \(p.bankId)")
                             .font(.callout)
-                        Button("Import \(p.transactions.count) Transactions") { doImport() }
-                            .buttonStyle(.borderedProminent).disabled(isImporting)
+                        if let org = p.institutionOrg {
+                            Text("Institution: \(org)\(p.institutionFid.map { " (FID \($0))" } ?? "")")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            Button("Import \(p.transactions.count) Transactions") { doImport() }
+                                .buttonStyle(.borderedProminent).disabled(isImporting)
+                            Button("Use for Server Sync") { prefillSync(from: p) }
+                                .help("Fill the server sync form below with this file's bank name and account ID")
+                        }
                     }
                     if !status.isEmpty { Text(status).font(.caption) }
                 }
@@ -42,7 +50,7 @@ struct ImportView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("OFX server sync (where your bank still supports it)").font(.headline)
-                    Text("Enter the bank's OFXHome URL (usually shown as 'OFX ••••' in account details). Password is stored only in your Keychain. Many banks have disabled direct OFX — file import above is the fallback.")
+                    Text("An OFX file doesn't include the server address. Enter the bank's OFX URL (look it up at ofxhome.com by the institution name or FID shown above). Password is stored only in your Keychain. Many banks have disabled direct OFX — file import above is the fallback.")
                         .font(.caption).foregroundStyle(.secondary)
                     Form {
                         TextField("Bank name / ID", text: $bankName)
@@ -76,6 +84,13 @@ struct ImportView: View {
             preview = try OFXParser.shared.parse(data: data)
             status = ""
         } catch { status = "Parse failed: \(error.localizedDescription)" }
+    }
+
+    private func prefillSync(from p: ParsedOFXFile) {
+        let name = p.institutionOrg ?? p.bankId
+        bankName = [name, p.institutionFid.map { "FID \($0)" }].compactMap { $0 }.joined(separator: " ")
+        acctId = p.accountId
+        syncStatus = "Filled in bank and account ID. Add the OFX URL and your username."
     }
 
     private func doImport() {

@@ -62,7 +62,11 @@ final class OFXParser: Sendable {
         var seen = Set<String>()
         let deduped = allTransactions.filter { seen.insert("\($0.accountId)|\($0.fitid)").inserted }
         if accountName.isEmpty { accountName = "Account \(accountId)" }
-        return ParsedOFXFile(bankId: bankId, accountId: accountId, accountName: accountName, balance: balance, transactions: deduped)
+        let fi = findFirst(root, name: "FI")
+        let org = fi.flatMap { value(of: "ORG", under: $0) }.flatMap { $0.isEmpty ? nil : $0 }
+        let fid = fi.flatMap { value(of: "FID", under: $0) }.flatMap { $0.isEmpty ? nil : $0 }
+        return ParsedOFXFile(bankId: bankId, accountId: accountId, accountName: accountName, balance: balance,
+                             transactions: deduped, institutionOrg: org, institutionFid: fid)
     }
 
     // MARK: - Tree building

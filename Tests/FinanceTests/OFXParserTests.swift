@@ -29,4 +29,29 @@ final class OFXParserTests: XCTestCase {
         XCTAssertEqual(cal.component(.month, from: d), 1)
         XCTAssertEqual(cal.component(.day, from: d), 15)
     }
+
+    func testInstitutionOrgAndFidSGML() throws {
+        let sgml = """
+        OFXHEADER:100
+        DATA:OFXSGML
+
+        <OFX><SIGNONMSGSRSV1><SONRS><STATUS><CODE>0<SEVERITY>INFO</STATUS>
+        <DTSERVER>20240131120000<LANGUAGE>ENG
+        <FI><ORG>Example Credit Union<FID>1234</FI></SONRS></SIGNONMSGSRSV1>
+        <BANKMSGSRSV1><STMTTRNRS><STMTRS><BANKACCTFROM><BANKID>999<ACCTID>555</BANKACCTFROM>
+        <BANKTRANLIST><STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20240115<TRNAMT>-10.00<FITID>a1<NAME>Coffee</STMTTRN></BANKTRANLIST>
+        </STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>
+        """
+        let parsed = try OFXParser.shared.parse(string: sgml)
+        XCTAssertEqual(parsed.institutionOrg, "Example Credit Union")
+        XCTAssertEqual(parsed.institutionFid, "1234")
+        XCTAssertEqual(parsed.transactions.count, 1)
+    }
+
+    func testNoInstitutionBlockGivesNil() throws {
+        let data = try Data(contentsOf: Bundle.module.url(forResource: "sample", withExtension: "ofx")!)
+        let parsed = try OFXParser.shared.parse(data: data)
+        XCTAssertNil(parsed.institutionOrg)
+        XCTAssertNil(parsed.institutionFid)
+    }
 }

@@ -114,6 +114,10 @@ struct ParsedOFXFile {
     var accountName: String
     var balance: Double?
     var transactions: [OFXTransaction]
+    /// Financial institution from the file's <FI> block, when present.
+    /// These identify the bank (e.g. for looking up its OFX server) but are not a server URL.
+    var institutionOrg: String? = nil
+    var institutionFid: String? = nil
 }
 
 struct MonthlySummary {
