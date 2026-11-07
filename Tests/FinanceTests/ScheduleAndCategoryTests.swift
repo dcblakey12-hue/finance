@@ -989,3 +989,37 @@ final class FutureLedgerTests: XCTestCase {
         XCTAssertEqual(days.first { $0.date == d(11, 25) }?.closing, 800)
     }
 }
+
+final class BackupServiceTests: XCTestCase {
+    @MainActor
+    func testBackupRoundTripAndStartNew() throws {
+        let container = try ModelContainer(for: Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                                           OFXProfile.self, CategoryRule.self, CustomCategory.self,
+                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let ctx = container.mainContext
+        ctx.insert(Account(name: "Checking", type: .checking, accountId: "chk", bankName: "Bank", balance: 100))
+        let bill = RecurringBill(name: "Rent", amount: 1200, dueDay: 1, category: "Housing")
+        bill.frequencyRaw = "weekly"; bill.accountId = "chk"; bill.occurrenceLogRaw = "2026-11-01|e"
+        ctx.insert(bill)
+        ctx.insert(TransactionRecord(fitid: "f1", accountId: "chk", accountName: "Checking", date: Date(), name: "Cafe", amount: -4, type: .debit))
+        try ctx.save()
+
+        let snap = BackupService.snapshot(in: ctx)
+        let data = try BackupService.encode(snap)
+        let back = try BackupService.decode(data)
+        XCTAssertEqual(back.accounts, snap.accounts)
+        XCTAssertEqual(back.schedules.first?.frequencyRaw, "weekly")
+
+        BackupService.wipe(in: ctx)
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<TransactionRecord>()).count, 0)
+        BackupService.restore(back, in: ctx)
+        let restored = try ctx.fetch(FetchDescriptor<RecurringBill>())
+        XCTAssertEqual(restored.first?.occurrenceLogRaw, "2026-11-01|e")
+        XCTAssertEqual(restored.first?.accountId, "chk")
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<TransactionRecord>()).count, 1)
+
+        BackupService.startNew(in: ctx)
+        XCTAssertEqual(try ctx.fetch(FetchDescriptor<Account>()).count, 0)
+        XCTAssertFalse(try ctx.fetch(FetchDescriptor<CustomCategory>()).isEmpty)   // standard categories re-seeded
+    }
+}
