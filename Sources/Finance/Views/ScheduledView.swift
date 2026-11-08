@@ -83,10 +83,8 @@ struct ScheduledView: View {
                         Button("Delete…", role: .destructive) { pendingDelete = s }
                     }
                 } primaryAction: { ids in
-                    // Double-click: enter (or skip) the next payment. Edit the schedule from the right-click menu.
-                    if let s = schedule(for: ids) {
-                        if s.isActive { entering = EntryTarget(bill: s, date: nil) } else { editor = ScheduleEditor(existing: s, draft: draft(of: s)) }
-                    }
+                    // Double-click: adjust the schedule. Enter / skip the next payment from the right-click menu.
+                    if let s = schedule(for: ids) { editor = ScheduleEditor(existing: s, draft: draft(of: s)) }
                 }
             }
         }
