@@ -215,3 +215,59 @@ enum CashFlowForecastService: Sendable {
         return sums.reduce(0, +) / Double(sums.count)
     }
 }
+
+// MARK: - Dashboard numbers
+
+struct CashPoint: Identifiable, Equatable {
+    var date: Date
+    var balance: Double
+    var id: Date { date }
+}
+
+enum DashboardMath {
+    /// Projected cash balance day by day from today for `days` days, plus the scheduled and
+    /// booked-ahead items that land in that window (only the ones that move the cash balance, or transfers).
+    static func projection(days: Int, schedules: [ScheduleItem], balanceToday: Double, cashAccountIds: Set<String>,
+                           ledger: [LedgerEntry] = [], today: Date = Date(), calendar: Calendar = .current)
+        -> (points: [CashPoint], upcoming: [ForecastEvent]) {
+        let start = calendar.startOfDay(for: today)
+        guard let end = calendar.date(byAdding: .day, value: max(days, 1), to: start) else { return ([], []) }
+        var byDay: [Date: CalendarDay] = [:]
+        var month = start
+        while month <= end {
+            for d in CashCalendar.grid(month: month, schedules: schedules, balanceToday: balanceToday, today: today,
+                                       cashAccountIds: cashAccountIds, ledger: ledger, calendar: calendar)
+            where d.date >= start && d.date <= end && d.closing != nil {
+                byDay[d.date] = d
+            }
+            guard let next = calendar.date(byAdding: .month, value: 1, to: month) else { break }
+            month = next
+        }
+        let ordered = byDay.values.sorted { $0.date < $1.date }
+        let points = ordered.compactMap { d in d.closing.map { CashPoint(date: d.date, balance: $0) } }
+        let upcoming = ordered.flatMap(\.events).filter { $0.amount != 0 || $0.isTransfer }
+        return (points, upcoming)
+    }
+
+    /// Net worth at the end of each of the last `months` months and today, found by undoing
+    /// the transactions posted since (future-dated ones are ignored: `currentTotal` is as of today).
+    static func netWorthHistory(currentTotal: Double, transactions: [(date: Date, amount: Double)], months: Int,
+                                today: Date = Date(), calendar: Calendar = .current) -> [CashPoint] {
+        let todayStart = calendar.startOfDay(for: today)
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: todayStart) else { return [] }
+        let posted = transactions.filter { $0.date < tomorrow }
+        func value(endOfDay d: Date) -> Double {
+            guard let after = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: d)) else { return currentTotal }
+            return currentTotal - posted.filter { $0.date >= after }.reduce(0) { $0 + $1.amount }
+        }
+        var out: [CashPoint] = []
+        let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: todayStart)) ?? todayStart
+        for back in stride(from: months, through: 1, by: -1) {
+            guard let thisStart = calendar.date(byAdding: .month, value: -back + 1, to: monthStart),
+                  let end = calendar.date(byAdding: .day, value: -1, to: thisStart) else { continue }
+            out.append(CashPoint(date: end, balance: value(endOfDay: end)))
+        }
+        out.append(CashPoint(date: todayStart, balance: currentTotal))
+        return out
+    }
+}
