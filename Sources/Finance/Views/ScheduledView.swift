@@ -19,6 +19,13 @@ struct ScheduledView: View {
     private func routeText(_ s: RecurringBill) -> String { s.item(accountNames: accountNames).detail ?? "Transfer" }
     private var categories: [String] { BudgetService.allCategories(stored: customCategories.map(\.name)) }
     private var monthlyIncome: Double { schedules.filter { $0.isActive && $0.isIncome }.reduce(0) { $0 + $1.monthlySize } }
+    /// Transfers out of checking/savings/cash into a card or loan (e.g. paying the credit card): real money leaving.
+    private var monthlyCardPayments: Double {
+        let cash = Set(accounts.filter { [.checking, .savings, .cash].contains($0.type) }.map(\.accountId))
+        return schedules.filter { s in
+            s.isActive && s.isTransfer && cash.contains(s.fromAccountId ?? "") && !cash.contains(s.toAccountId ?? "")
+        }.reduce(0) { $0 + $1.monthlySize }
+    }
     private var monthlyBills: Double { schedules.filter { $0.isActive && $0.isExpense }.reduce(0) { $0 + $1.monthlySize } }
 
     var body: some View {
@@ -26,7 +33,9 @@ struct ScheduledView: View {
             HStack(spacing: 24) {
                 total("Monthly income", monthlyIncome, .green)
                 total("Monthly bills", monthlyBills, .red)
-                total("Net", monthlyIncome - monthlyBills, monthlyIncome >= monthlyBills ? .green : .red)
+                if monthlyCardPayments > 0 { total("Card & loan payments", monthlyCardPayments, .red) }
+                total("Net", monthlyIncome - monthlyBills - monthlyCardPayments,
+                      monthlyIncome >= monthlyBills + monthlyCardPayments ? .green : .red)
                 Spacer()
             }
             .padding()
