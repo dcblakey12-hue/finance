@@ -87,7 +87,12 @@ final class KeychainStore: Sendable {
 /// Small generic Keychain helper for the Plaid keys and access tokens (this Mac only, never synced).
 enum SecretStore {
     private static let service = "com.finance.app.plaid"
+    /// Values already read this run, so each Keychain item is asked for once (each read can show a password prompt).
+    private static var cache: [String: String?] = [:]
+    private static let lock = NSLock()
+
     static func set(_ value: String, for key: String) {
+        lock.lock(); cache[key] = value.isEmpty ? .some(nil) : .some(value); lock.unlock()
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key]
         SecItemDelete(q as CFDictionary)
         guard !value.isEmpty else { return }
@@ -97,11 +102,16 @@ enum SecretStore {
         SecItemAdd(a as CFDictionary, nil)
     }
     static func get(_ key: String) -> String? {
+        lock.lock()
+        if let hit = cache[key] { lock.unlock(); return hit }
+        lock.unlock()
         let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                 kSecAttrAccount as String: key, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let d = item as? Data else { return nil }
-        return String(data: d, encoding: .utf8)
+        var value: String?
+        if SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let d = item as? Data { value = String(data: d, encoding: .utf8) }
+        lock.lock(); cache[key] = .some(value); lock.unlock()
+        return value
     }
 }
 
