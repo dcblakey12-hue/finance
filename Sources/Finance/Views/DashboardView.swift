@@ -10,6 +10,8 @@ struct DashboardView: View {
     /// Accounts the dashboard covers (comma-separated OFX accountIds; empty = all).
     @AppStorage("finance.dashboard.accountIds") private var accountIdsRaw = ""
     @State private var showAccountPicker = false
+    /// The day clicked on the cash chart (start of day).
+    @State private var pickedDay: Date?
 
     private var selectedIds: Set<String>? {
         let ids = Set(accountIdsRaw.split(separator: ",").map(String.init)).intersection(allAccounts.map(\.accountId))
@@ -130,22 +132,46 @@ struct DashboardView: View {
                                 }
                                 RuleMark(y: .value("Zero", 0)).foregroundStyle(.red.opacity(0.5)).lineStyle(StrokeStyle(lineWidth: 1, dash: [4]))
                                 if let low { PointMark(x: .value("Day", low.date, unit: .day), y: .value("Balance", low.balance)).foregroundStyle(.orange) }
+                                if let sel = pickedPoint(in: proj.points) {
+                                    RuleMark(x: .value("Day", sel.date, unit: .day)).foregroundStyle(.secondary.opacity(0.5))
+                                    PointMark(x: .value("Day", sel.date, unit: .day), y: .value("Balance", sel.balance))
+                                        .symbolSize(90).foregroundStyle(.blue)
+                                }
                             }
                             .chartYAxis { AxisMarks { v in AxisGridLine(); AxisValueLabel { if let d = v.as(Double.self) { Text(short(d)) } } } }
+                            .chartOverlay { proxy in
+                                GeometryReader { geo in
+                                    Rectangle().fill(.clear).contentShape(Rectangle())
+                                        .onTapGesture { location in
+                                            guard let frame = proxy.plotFrame else { return }
+                                            let x = location.x - geo[frame].origin.x
+                                            if let d: Date = proxy.value(atX: x) {
+                                                let day = Calendar.current.startOfDay(for: d)
+                                                pickedDay = (pickedDay == day) ? nil : day
+                                            }
+                                        }
+                                }
+                            }
                             .frame(height: 170)
+                            Text(pickedDay == nil ? "Click the line to see a day's balance and what moves it." : "Click the same day again, or Show all, to clear.")
+                                .font(.caption2).foregroundStyle(.secondary)
                         }
                     }
-                    card("Coming up") {
-                        let list = Array(proj.upcoming.prefix(8))
-                        if list.isEmpty { Text("Nothing scheduled in the next 30 days.").font(.caption).foregroundStyle(.secondary) }
-                        ForEach(list) { e in
-                            HStack {
-                                Text(day(e.date)).font(.caption).foregroundStyle(.secondary).frame(width: 48, alignment: .leading)
-                                Text(e.name).lineLimit(1)
-                                Spacer()
-                                Text(money(e.isTransfer ? e.gross : e.amount)).monospacedDigit()
-                                    .foregroundStyle(e.isTransfer ? .blue : (e.amount > 0 ? .green : .primary))
-                            }.font(.callout)
+                    card(pickedDay == nil ? "Coming up" : "Day detail") {
+                        if let sel = pickedPoint(in: proj.points) {
+                            dayDetail(sel, days: proj.days, points: proj.points, startBalance: cashToday)
+                        } else {
+                            let list = Array(proj.upcoming.prefix(8))
+                            if list.isEmpty { Text("Nothing scheduled in the next 30 days.").font(.caption).foregroundStyle(.secondary) }
+                            ForEach(list) { e in
+                                HStack {
+                                    Text(day(e.date)).font(.caption).foregroundStyle(.secondary).frame(width: 48, alignment: .leading)
+                                    Text(e.name).lineLimit(1)
+                                    Spacer()
+                                    Text(money(e.isTransfer ? e.gross : e.amount)).monospacedDigit()
+                                        .foregroundStyle(e.isTransfer ? .blue : (e.amount > 0 ? .green : .primary))
+                                }.font(.callout)
+                            }
                         }
                     }
                     .frame(width: 300)
@@ -228,6 +254,50 @@ struct DashboardView: View {
     }
 
     // MARK: - Pieces
+
+    /// The chart point for the clicked day.
+    private func pickedPoint(in points: [CashPoint]) -> CashPoint? {
+        guard let pickedDay else { return nil }
+        return points.first { Calendar.current.isDate($0.date, inSameDayAs: pickedDay) }
+    }
+
+    /// Balance and the items that move it on one day of the cash chart.
+    @ViewBuilder
+    private func dayDetail(_ sel: CashPoint, days: [CalendarDay], points: [CashPoint], startBalance: Double) -> some View {
+        let idx = points.firstIndex { $0.id == sel.id } ?? 0
+        let opening = idx > 0 ? points[idx - 1].balance : startBalance
+        let events = (days.first { Calendar.current.isDate($0.date, inSameDayAs: sel.date) }?.events ?? [])
+            .filter { $0.amount != 0 || $0.isTransfer }
+        HStack {
+            Text(sel.date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())).font(.subheadline.bold())
+            Spacer()
+            Button("Show all") { pickedDay = nil }.buttonStyle(.link).font(.caption)
+        }
+        HStack {
+            Text("Balance").foregroundStyle(.secondary)
+            Spacer()
+            Text(money(sel.balance)).bold().monospacedDigit().foregroundStyle(sel.balance < 0 ? .red : .primary)
+        }.font(.callout)
+        if idx > 0 || !events.isEmpty {
+            Text(idx == 0 ? "Starting from \(money(opening)) today" : "Previous day \(money(opening))")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        Divider()
+        if events.isEmpty {
+            Text("Nothing moves the balance on this day.").font(.caption).foregroundStyle(.secondary)
+        }
+        ForEach(events) { e in
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(e.name).lineLimit(1)
+                    if let d = e.detail { Text(d).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
+                }
+                Spacer()
+                Text(money(e.amount)).monospacedDigit().foregroundStyle(e.amount > 0 ? .green : .primary)
+            }.font(.callout)
+        }
+    }
+
 
     private func card<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {

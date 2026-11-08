@@ -229,9 +229,9 @@ enum DashboardMath {
     /// booked-ahead items that land in that window (only the ones that move the cash balance, or transfers).
     static func projection(days: Int, schedules: [ScheduleItem], balanceToday: Double, cashAccountIds: Set<String>,
                            ledger: [LedgerEntry] = [], today: Date = Date(), calendar: Calendar = .current)
-        -> (points: [CashPoint], upcoming: [ForecastEvent]) {
+        -> (points: [CashPoint], upcoming: [ForecastEvent], days: [CalendarDay]) {
         let start = calendar.startOfDay(for: today)
-        guard let end = calendar.date(byAdding: .day, value: max(days, 1), to: start) else { return ([], []) }
+        guard let end = calendar.date(byAdding: .day, value: max(days, 1), to: start) else { return ([], [], []) }
         var byDay: [Date: CalendarDay] = [:]
         var month = start
         while month <= end {
@@ -246,7 +246,7 @@ enum DashboardMath {
         let ordered = byDay.values.sorted { $0.date < $1.date }
         let points = ordered.compactMap { d in d.closing.map { CashPoint(date: d.date, balance: $0) } }
         let upcoming = ordered.flatMap(\.events).filter { $0.amount != 0 || $0.isTransfer }
-        return (points, upcoming)
+        return (points, upcoming, ordered)
     }
 
     /// Net worth at the end of each of the last `months` months and today, found by undoing
