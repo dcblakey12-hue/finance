@@ -327,6 +327,8 @@ enum ScheduleService {
         for (k, status) in log where status == .skipped {
             if let d = OccurrenceLog.date(fromKey: k, calendar: calendar), d >= todayStart { log[k] = nil }
         }
+        // Picking a date means "this one is due": drop an entered/skipped mark sitting on exactly that day.
+        log[OccurrenceLog.key(target, calendar: calendar)] = nil
         bill.occurrenceLogRaw = OccurrenceLog.serialize(log, calendar: calendar)
         var guardCount = 0
         while guardCount < 60, let next = bill.rule.nextDate(from: today, calendar: calendar), next < target {
