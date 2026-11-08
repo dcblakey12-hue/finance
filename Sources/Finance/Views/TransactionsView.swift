@@ -55,6 +55,13 @@ struct TransactionsView: View {
     }
 
     var body: some View {
+        // Work out the expensive things once per redraw (thousands of rows add up quickly).
+        let rows = filtered
+        let runningBalances = balances
+        let byId = Dictionary(transactions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let usedCats = usedCategories
+        let cats = Array(Set(assignableCategories)).sorted()
+        let net = rows.reduce(0) { $0 + $1.amount }
         VStack(spacing: 0) {
             HStack {
                 Picker("Account", selection: $filters.accountId) {
@@ -69,7 +76,7 @@ struct TransactionsView: View {
                 TextField("Search transactions", text: $search).textFieldStyle(.roundedBorder)
                 Picker("Category", selection: $filters.category) {
                     Text("All").tag("All")
-                    ForEach(Array(Set(usedCategories + [filters.category]).subtracting(["All"])).sorted(), id: \.self) { c in Text(c).tag(c) }
+                    ForEach(Array(Set(usedCats + [filters.category]).subtracting(["All"])).sorted(), id: \.self) { c in Text(c).tag(c) }
                 }
                 Button("Auto-categorize") {
                     let n = CategorizationService.categorizeUncategorized(in: context)
@@ -102,9 +109,7 @@ struct TransactionsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal).padding(.bottom, 6)
             }
-            let runningBalances = balances
-            let byId = Dictionary(uniqueKeysWithValues: transactions.map { ($0.id, $0) })
-            List(filtered, selection: $selection) { tx in
+            List(rows, selection: $selection) { tx in
                 HStack {
                     Text(tx.date, format: .dateTime.month(.abbreviated).day().year())
                         .monospacedDigit()
@@ -121,7 +126,7 @@ struct TransactionsView: View {
                             else { setCategory(choice, on: tx) }
                         }
                     )) {
-                        ForEach(Array(Set(assignableCategories + [tx.category])).sorted(), id: \.self) { c in Text(c).tag(c) }
+                        ForEach(cats.contains(tx.category) ? cats : (cats + [tx.category]).sorted(), id: \.self) { c in Text(c).tag(c) }
                         Divider()
                         Text("New Category…").tag(Self.newCategoryChoice)
                     }
@@ -173,9 +178,9 @@ struct TransactionsView: View {
         }
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 16) {
-                Text("\(filtered.count) transaction\(filtered.count == 1 ? "" : "s")")
+                Text("\(rows.count) transaction\(rows.count == 1 ? "" : "s")")
                 Button("Select All") { selection = Set(filtered.map(\.id)) }
-                    .disabled(filtered.isEmpty)
+                    .disabled(rows.isEmpty)
                     .help("Select every transaction shown (Cmd-A also works in the list)")
                 if !selection.isEmpty {
                     Text("\(selection.count) selected").foregroundStyle(.secondary)
@@ -185,8 +190,8 @@ struct TransactionsView: View {
                 Spacer()
                 HStack(spacing: 4) {
                     Text("Net shown:").foregroundStyle(.secondary)
-                    Text(currency.string(from: NSNumber(value: shownNet)) ?? "")
-                        .foregroundStyle(shownNet < 0 ? Color.red : Color.green)
+                    Text(currency.string(from: NSNumber(value: net)) ?? "")
+                        .foregroundStyle(net < 0 ? Color.red : Color.green)
                 }
                 HStack(spacing: 4) {
                     Text("Balance:").foregroundStyle(.secondary)
