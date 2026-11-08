@@ -39,7 +39,7 @@ struct CalendarView: View {
         return out
     }
     private var accountNames: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
-    private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }.sorted { $0.name < $1.name } }
+    private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name, isCash: [.checking, .savings, .cash].contains($0.type)) }.sorted { $0.name < $1.name } }
     private var categories: [String] { BudgetService.allCategories(stored: customCategories.map(\.name)) }
     private var items: [ScheduleItem] { bills.filter(\.isActive).map { $0.item(accountNames: accountNames) } }
     private var days: [CalendarDay] {
