@@ -5,8 +5,24 @@ import Charts
 /// The overview: where you stand today (cash, net worth), what's coming (next 30 days, forecast),
 /// and where the money went.
 struct DashboardView: View {
-    @Query(sort: \Account.name) var accounts: [Account]
-    @Query(sort: \TransactionRecord.date, order: .reverse) var transactions: [TransactionRecord]
+    @Query(sort: \Account.name) var allAccounts: [Account]
+    @Query(sort: \TransactionRecord.date, order: .reverse) var allTransactions: [TransactionRecord]
+    /// Accounts the dashboard covers (comma-separated OFX accountIds; empty = all).
+    @AppStorage("finance.dashboard.accountIds") private var accountIdsRaw = ""
+    @State private var showAccountPicker = false
+
+    private var selectedIds: Set<String>? {
+        let ids = Set(accountIdsRaw.split(separator: ",").map(String.init)).intersection(allAccounts.map(\.accountId))
+        return ids.isEmpty || ids.count == allAccounts.count ? nil : ids
+    }
+    private func isIncluded(_ a: Account) -> Binding<Bool> {
+        Binding(get: { selectedIds?.contains(a.accountId) ?? true },
+                set: { on in
+                    var ids = selectedIds ?? Set(allAccounts.map(\.accountId))
+                    if on { ids.insert(a.accountId) } else if ids.count > 1 { ids.remove(a.accountId) }
+                    accountIdsRaw = ids.count == allAccounts.count ? "" : ids.sorted().joined(separator: ",")
+                })
+    }
     @Query var bills: [RecurringBill]
     @Query var envelopes: [Envelope]
 
@@ -28,7 +44,10 @@ struct DashboardView: View {
     private func day(_ d: Date) -> String { d.formatted(.dateTime.month(.abbreviated).day()) }
 
     var body: some View {
-        // Work everything out once per redraw.
+        // Work everything out once per redraw, for the chosen accounts only.
+        let sel = selectedIds
+        let accounts = allAccounts.filter { sel?.contains($0.accountId) ?? true }
+        let transactions = sel == nil ? allTransactions : allTransactions.filter { sel!.contains($0.accountId) }
         let book = BalanceBook(transactions: transactions)
         let cashAccounts = accounts.filter { Self.cashTypes.contains($0.type) }
         let cashToday = book.today(cashAccounts)
@@ -51,14 +70,30 @@ struct DashboardView: View {
         let forecast = CashFlowForecastService.forecast(
             bills: bills, envelopes: envelopes, transactions: transactions,
             options: ForecastOptions(months: 6, includeEnvelopes: true, fallbackAverageVariable: true, inferIncomeFromHistory: true,
-                                     startingBalance: accounts.reduce(0) { $0 + $1.balance }))
+                                     startingBalance: accounts.reduce(0) { $0 + $1.balance }),
+            accountIds: sel)
         let rows: [SpendingReport.Row] = transactions.map { ($0.category, $0.amount, $0.date) }
         let totals = SpendingReport.totals(rows, period: period)
         let spend = SpendingReport.byCategory(rows, period: period)
 
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Overview").font(.largeTitle.bold())
+                HStack {
+                    Text("Overview").font(.largeTitle.bold())
+                    Spacer()
+                    Button { showAccountPicker.toggle() } label: {
+                        Label(sel == nil ? "All accounts" : "\(accounts.count) of \(allAccounts.count) accounts", systemImage: "checklist")
+                    }
+                    .popover(isPresented: $showAccountPicker, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Show on the dashboard").font(.headline)
+                            ForEach(allAccounts) { a in Toggle(a.name, isOn: isIncluded(a)) }
+                            Divider()
+                            Button("All accounts") { accountIdsRaw = "" }.disabled(sel == nil)
+                        }.padding(12).frame(minWidth: 240)
+                    }
+                    .disabled(allAccounts.isEmpty)
+                }
 
                 if !overdue.isEmpty {
                     Label("\(overdue.count) scheduled payment\(overdue.count == 1 ? " is" : "s are") overdue — open Scheduled Transactions to enter or skip \(overdue.count == 1 ? "it" : "them").",
