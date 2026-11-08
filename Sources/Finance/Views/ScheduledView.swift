@@ -56,12 +56,8 @@ struct ScheduledView: View {
                     TableColumn("Repeats") { s in Text(s.rule.summary()) }.width(min: 130, ideal: 170)
                     TableColumn("Next due") { s in
                         if s.isActive, let d = s.rule.nextDate(from: Date()) {
-                            // Edit the date right here; changing it saves immediately.
-                            DatePicker("", selection: Binding(
-                                get: { d },
-                                set: { ScheduleService.setNextDue(s, to: $0, in: context) }
-                            ), in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
-                            .labelsHidden()
+                            // Click the date to change it; picking a new one saves immediately.
+                            DueDateCell(date: d) { ScheduleService.setNextDue(s, to: $0, in: context) }
                         } else { Text("—").foregroundStyle(.secondary) }
                     }.width(120)
                     TableColumn("Amount") { s in
@@ -218,6 +214,35 @@ struct ScheduledView: View {
             Text(title).font(.caption).foregroundStyle(.secondary)
             Text(currency.string(from: NSNumber(value: value)) ?? "").font(.title3.bold()).monospacedDigit().foregroundStyle(color)
         }
+    }
+}
+
+/// A due date shown as MM/DD/YYYY (zero-padded); click it to pick another date.
+struct DueDateCell: View {
+    let date: Date
+    let onChange: (Date) -> Void
+    @State private var open = false
+    @State private var picked = Date()
+
+    var body: some View {
+        Button {
+            picked = date; open = true
+        } label: {
+            Text(date, format: .dateTime.month(.twoDigits).day(.twoDigits).year())
+                .monospacedDigit()
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            DatePicker("", selection: $picked, in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
+                .datePickerStyle(.graphical).labelsHidden().padding(10)
+                .onChange(of: picked) { _, new in
+                    if Calendar.current.startOfDay(for: new) != Calendar.current.startOfDay(for: date) {
+                        open = false
+                        onChange(new)
+                    }
+                }
+        }
+        .help("Click to change the next due date")
     }
 }
 
