@@ -23,6 +23,8 @@ enum AppSection: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @Environment(\.modelContext) private var context
     @Query private var schedules: [RecurringBill]
+    @StateObject private var sync = SyncCoordinator()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selection: AppSection? = .dashboard
     /// OFX accountId shown in Transactions; nil = all accounts.
     @State private var transactionFilters = TransactionFilters()
@@ -66,6 +68,24 @@ struct ContentView: View {
             CategoryService.seedIfNeeded(in: context)
             DedupeService.run(in: context)
             ScheduleService.ensureTracking(in: context)
+            sync.syncIfStale(in: context)      // sync automatically when the app opens
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { sync.syncIfStale(in: context) }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: 8) {
+                    if sync.busy { ProgressView().controlSize(.small) }
+                    else if !sync.status.isEmpty {
+                        Text(sync.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 360)
+                    }
+                    Button { sync.syncAll(in: context) } label: { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
+                        .disabled(sync.busy || !sync.hasBanks)
+                        .keyboardShortcut("r", modifiers: .command)
+                        .help(sync.hasBanks ? "Sync your connected banks now (⌘R)" : "Connect a bank in Settings first")
+                }
+            }
         }
         .onChange(of: selection) { _, new in
             // Opening Transactions from the sidebar starts unfiltered; a drill-down keeps its filters.

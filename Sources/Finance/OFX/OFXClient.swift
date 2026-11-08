@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import SwiftData
+import Combine
 
 /// Direct OFX server client (OFXHome). Many banks no longer support this;
 /// file import is the reliable path. This client exists so both modes work
@@ -316,6 +317,40 @@ enum PlaidStore {
     static func remove(_ itemId: String) {
         SecretStore.set("", for: "plaid.token.\(itemId)")
         save(items().filter { $0.itemId != itemId })
+    }
+}
+
+/// Runs bank syncs for the whole app: the toolbar button, launch, and coming back to the app.
+@MainActor
+final class SyncCoordinator: ObservableObject {
+    @Published var busy = false
+    @Published var status = ""
+    private var lastRun: Date?
+
+    var hasBanks: Bool { !PlaidStore.items().isEmpty }
+
+    func syncAll(in context: ModelContext) {
+        guard !busy, hasBanks else { return }
+        busy = true; status = "Syncing…"
+        Task {
+            var lines: [String] = []
+            for item in PlaidStore.items() {
+                do { lines.append(try await PlaidSync.sync(item.itemId, in: context)) }
+                catch { lines.append("\(item.institution): \(error.localizedDescription)") }
+            }
+            status = lines.joined(separator: " ")
+            lastRun = Date(); busy = false
+            // Clear the message after a while.
+            let shown = status
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            if status == shown && !busy { status = "" }
+        }
+    }
+
+    /// Automatic sync: at most once every `minutes`.
+    func syncIfStale(minutes: Double = 30, in context: ModelContext) {
+        if let lastRun, Date().timeIntervalSince(lastRun) < minutes * 60 { return }
+        syncAll(in: context)
     }
 }
 

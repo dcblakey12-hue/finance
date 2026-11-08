@@ -1158,3 +1158,15 @@ final class MonthEndTests: XCTestCase {
         XCTAssertEqual(twice.dates(from: d(2026, 2, 1), to: d(2026, 2, 28), calendar: cal), [d(2026, 2, 15), d(2026, 2, 28)])
     }
 }
+
+@MainActor
+final class ReconciledTests: XCTestCase {
+    func testBankRecordsAreReconciledAndHandEnteredOnesAreNot() {
+        func tx(_ fitid: String) -> TransactionRecord {
+            TransactionRecord(fitid: fitid, accountId: "a", accountName: "A", date: Date(), name: "x", amount: -5, type: .debit)
+        }
+        XCTAssertTrue(tx("20260101-123").isReconciled)                           // file import
+        XCTAssertTrue(tx(PlaidMapping.prefix + "abc").isReconciled)              // bank sync
+        XCTAssertFalse(tx(ManualTransactionService.prefix + "1").isReconciled)   // typed in by hand
+    }
+}
