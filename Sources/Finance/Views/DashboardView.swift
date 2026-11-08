@@ -47,7 +47,7 @@ struct DashboardView: View {
         let low = proj.points.min { $0.balance < $1.balance }
         let nextPay = proj.upcoming.first { $0.isIncome }
         let overdue = ScheduleService.overdue(bills)
-        let history = DashboardMath.netWorthHistory(currentTotal: netWorth, transactions: transactions.map { ($0.date, $0.amount) }, months: 12)
+        let history = DashboardMath.netWorthHistory(currentTotal: netWorth, transactions: transactions.map { (date: $0.date, amount: $0.amount) }, months: 12)
         let forecast = CashFlowForecastService.forecast(
             bills: bills, envelopes: envelopes, transactions: transactions,
             options: ForecastOptions(months: 6, includeEnvelopes: true, fallbackAverageVariable: true, inferIncomeFromHistory: true,
