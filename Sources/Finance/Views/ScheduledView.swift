@@ -113,7 +113,9 @@ struct ScheduledView: View {
             ScheduleEditorSheet(editor: ed, categories: categories, accounts: accountChoices) { result in
                 ScheduleEditor.save(result, existing: ed.existing, in: context)
                 editor = nil
-            } onCancel: { editor = nil }
+            } onCancel: { editor = nil } onNextDue: { date in
+                if let b = ed.existing { ScheduleService.setNextDue(b, to: date, in: context) }
+            }
         }
         .confirmationDialog("Delete “\(pendingDelete?.name ?? "")”?", isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
@@ -242,6 +244,11 @@ struct ScheduleEditorSheet: View {
     let accounts: [AccountChoice]
     let onSave: (ScheduleDraft) -> Void
     let onCancel: () -> Void
+    /// Called after saving when the next due date was changed (existing schedules only).
+    var onNextDue: (Date) -> Void = { _ in }
+
+    @State private var nextDue = Date()
+    @State private var originalNextDue: Date?
     @State private var draft = ScheduleDraft(name: "", amount: 0, dueDay: 1, category: "Other", isIncome: false)
     @State private var amountText = ""
 
@@ -323,6 +330,12 @@ struct ScheduleEditorSheet: View {
                         ForEach(accounts) { Text($0.name).tag(Optional($0.id)) }
                     }
                 }
+                if editor.existing != nil, let original = originalNextDue {
+                    DatePicker("Next due", selection: $nextDue, in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
+                    if Calendar.current.startOfDay(for: nextDue) != original {
+                        Text("Payments before this date will be skipped. Nothing is booked.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Active", isOn: $draft.isActive)
             }
             .formStyle(.grouped)
@@ -341,6 +354,7 @@ struct ScheduleEditorSheet: View {
                     else if d.isIncome { d.category = "Income" }
                     else if d.category == "Income" || d.category == Categorizer.transfer { d.category = "Other" }
                     onSave(d)
+                    if let original = originalNextDue, Calendar.current.startOfDay(for: nextDue) != original { onNextDue(nextDue) }
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
@@ -351,6 +365,7 @@ struct ScheduleEditorSheet: View {
         .frame(width: 420)
         .onAppear {
             draft = editor.draft
+            if let b = editor.existing, b.isActive, let d = b.rule.nextDate(from: Date()) { nextDue = d; originalNextDue = d }
             if draft.accountId == nil && !draft.isTransfer {
                 // Default to a checking-type account the first time (accounts are listed by name).
                 draft.accountId = accounts.first?.id
