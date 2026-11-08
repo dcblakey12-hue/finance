@@ -21,6 +21,8 @@ struct TransactionsView: View {
     /// Rows picked for bulk actions (Select All is Cmd-A in the list, or the button below).
     @State private var selection = Set<UUID>()
     @State private var confirmingDelete = false
+    /// Transaction whose category list is open.
+    @State private var editingCategoryFor: UUID?
 
     var filtered: [TransactionRecord] {
         transactions.filter { t in
@@ -119,19 +121,23 @@ struct TransactionsView: View {
                         Text(accountLine(tx, byId)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Picker("Category", selection: Binding(
-                        get: { tx.category },
-                        set: { choice in
-                            if choice == Self.newCategoryChoice { newCategoryFor = tx }
-                            else { setCategory(choice, on: tx) }
+                    // A plain button; the list of categories is only built when it's clicked
+                    // (a dropdown per row made big lists slow).
+                    Button { editingCategoryFor = tx.id } label: {
+                        HStack(spacing: 4) {
+                            Text(tx.category).lineLimit(1)
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundStyle(.secondary)
                         }
-                    )) {
-                        ForEach(cats.contains(tx.category) ? cats : (cats + [tx.category]).sorted(), id: \.self) { c in Text(c).tag(c) }
-                        Divider()
-                        Text("New Category…").tag(Self.newCategoryChoice)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .frame(width: 150, alignment: .leading)
+                        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .labelsHidden()
-                    .frame(width: 150)
+                    .buttonStyle(.plain)
+                    .popover(isPresented: Binding(get: { editingCategoryFor == tx.id },
+                                                  set: { if !$0 { editingCategoryFor = nil } }), arrowEdge: .bottom) {
+                        categoryChoices(for: tx, cats: cats)
+                    }
                     Text(currency.string(from: NSNumber(value: tx.amount)) ?? "$0")
                         .foregroundStyle(tx.isExpense ? .red : .green)
                         .monospacedDigit()
@@ -246,6 +252,43 @@ struct TransactionsView: View {
                 setCategory(name, on: tx)
             } onCancel: { newCategoryFor = nil }
         }
+    }
+
+    private func categoryChoices(for tx: TransactionRecord, cats: [String]) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(cats.contains(tx.category) ? cats : (cats + [tx.category]).sorted(), id: \.self) { c in
+                    Button {
+                        editingCategoryFor = nil
+                        setCategory(c, on: tx)
+                    } label: {
+                        HStack {
+                            Text(c)
+                            Spacer()
+                            if c == tx.category { Image(systemName: "checkmark") }
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                Divider().padding(.vertical, 4)
+                Button {
+                    editingCategoryFor = nil
+                    // Let the popover finish closing before the next sheet opens.
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 350_000_000)
+                        newCategoryFor = tx
+                    }
+                } label: {
+                    Text("New Category…").padding(.horizontal, 10).padding(.vertical, 4).frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.vertical, 6)
+        }
+        .frame(width: 220, height: 320)
     }
 
     private func chip(_ title: String, clear: @escaping () -> Void) -> some View {
