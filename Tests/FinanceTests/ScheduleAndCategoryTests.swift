@@ -1092,3 +1092,30 @@ final class BulkDeleteTests: XCTestCase {
         XCTAssertNil(left.first?.transferPeerId)
     }
 }
+
+final class ForecastAccountsTests: XCTestCase {
+    @MainActor
+    func testForecastFollowsTheChosenAccounts() throws {
+        let container = try ModelContainer(for: Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                                           OFXProfile.self, CategoryRule.self, CustomCategory.self,
+                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let ctx = container.mainContext
+        let cardBill = RecurringBill(name: "Netflix", amount: 20, dueDay: 28, category: "Fun")
+        cardBill.accountId = "visa"
+        let rent = RecurringBill(name: "Rent", amount: 1000, dueDay: 28, category: "Housing")
+        rent.accountId = "chk"
+        let payCard = RecurringBill(name: "Pay Visa", amount: 300, dueDay: 28, category: "Transfer")
+        payCard.kindRaw = "transfer"; payCard.fromAccountId = "chk"; payCard.toAccountId = "visa"
+        [cardBill, rent, payCard].forEach { ctx.insert($0) }
+        let opts = ForecastOptions(months: 1, includeEnvelopes: false, fallbackAverageVariable: false,
+                                   inferIncomeFromHistory: false, startingBalance: 5000,
+                                   from: Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 1))!)
+        func names(_ ids: Set<String>?) -> [String] {
+            CashFlowForecastService.forecast(bills: [cardBill, rent, payCard], envelopes: [], transactions: [], options: opts, accountIds: ids)
+                .first?.events.map(\.name).sorted() ?? []
+        }
+        XCTAssertEqual(names(nil), ["Netflix", "Rent"])                 // everything: transfers cancel out
+        XCTAssertEqual(names(["chk"]), ["Pay Visa", "Rent"])            // checking only: the card payment leaves
+        XCTAssertEqual(names(["visa"]), ["Netflix", "Pay Visa"])        // card only: the payment arrives
+    }
+}

@@ -24,27 +24,39 @@ enum CashFlowForecastService: Sendable {
         bills: [RecurringBill],
         envelopes: [Envelope],
         transactions: [TransactionRecord],
-        options: ForecastOptions
+        options: ForecastOptions,
+        accountIds: Set<String>? = nil      // nil = all accounts
     ) -> [ForecastMonth] {
         // `RecurringBill` / `Envelope` / `TransactionRecord` are @MainActor-isolated
         // SwiftData models. Read plain values here via Sendable DTOs to keep
         // this function pure and testable without SwiftData concurrency noise.
-        // Transfers between your own accounts don't change net worth, so the forecast ignores them.
-        let active = bills.filter { $0.isActive && !$0.isTransfer }
         // Payments already entered in the past still count when you start the forecast before them
         // (the starting balance is wound back to that date); skipped ones never happened.
         let todayStart = Calendar.current.startOfDay(for: Date())
-        let rules: [ScheduleRule?] = active.map { b in
+        var plainBills: [(name: String, amount: Double, dueDay: Int, category: String, isIncome: Bool)] = []
+        var rules: [ScheduleRule?] = []
+        for b in bills where b.isActive {
             var r = b.rule
             r.excluded = Set(b.occurrenceLog.compactMap { key, status -> Date? in
                 guard let d = OccurrenceLog.date(fromKey: key) else { return nil }
                 return (status == .skipped || d >= todayStart) ? d : nil
             })
-            return r
+            if b.isTransfer {
+                // Between your own accounts it only matters when exactly one side is in the forecast.
+                guard let ids = accountIds, let from = b.fromAccountId, let to = b.toAccountId else { continue }
+                let fromIn = ids.contains(from), toIn = ids.contains(to)
+                guard fromIn != toIn else { continue }
+                plainBills.append((name: b.name, amount: abs(b.amount), dueDay: b.dueDay, category: Categorizer.transfer, isIncome: toIn))
+            } else {
+                if let ids = accountIds, let a = b.accountId, !ids.contains(a) { continue }
+                plainBills.append((name: b.name, amount: abs(b.amount), dueDay: b.dueDay, category: b.category, isIncome: b.isIncome))
+            }
+            rules.append(r)
         }
-        let plainBills = active.map { (name: $0.name, amount: abs($0.amount), dueDay: $0.dueDay, category: $0.category, isIncome: $0.isIncome) }
         let plainEnvelopes = envelopes.map { (category: $0.category, year: $0.year, month: $0.month, allocated: max(0, $0.allocated)) }
-        let plainTx = transactions.filter { $0.category != Categorizer.transfer }.map { (date: $0.date, amount: $0.amount) }
+        let plainTx = transactions
+            .filter { $0.category != Categorizer.transfer && (accountIds?.contains($0.accountId) ?? true) }
+            .map { (date: $0.date, amount: $0.amount) }
         return forecastPlain(bills: plainBills, envelopes: plainEnvelopes, transactions: plainTx, options: options, rules: rules)
     }
 

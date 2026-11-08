@@ -14,13 +14,33 @@ struct ForecastView: View {
     @State private var inferIncome = true
     @State private var selectedMonthID: Date?
     @State private var startDate = Calendar.current.startOfDay(for: Date())
+    /// Accounts included in the forecast (comma-separated OFX accountIds; empty = all accounts).
+    @AppStorage("forecastAccountIds") private var accountIdsRaw = ""
+
+    private var selectedIds: Set<String>? {
+        let ids = Set(accountIdsRaw.split(separator: ",").map(String.init)).intersection(accounts.map(\.accountId))
+        return ids.isEmpty || ids.count == accounts.count ? nil : ids
+    }
+    private var includedAccounts: [Account] { accounts.filter { selectedIds?.contains($0.accountId) ?? true } }
+    private func isIncluded(_ a: Account) -> Binding<Bool> {
+        Binding(get: { selectedIds?.contains(a.accountId) ?? true },
+                set: { on in
+                    var ids = selectedIds ?? Set(accounts.map(\.accountId))
+                    if on { ids.insert(a.accountId) } else if ids.count > 1 { ids.remove(a.accountId) }
+                    accountIdsRaw = ids.count == accounts.count ? "" : ids.sorted().joined(separator: ",")
+                })
+    }
+    private var accountsLabel: String {
+        guard let ids = selectedIds else { return "All accounts" }
+        return ids.count == 1 ? (includedAccounts.first?.name ?? "1 account") : "\(ids.count) of \(accounts.count) accounts"
+    }
 
     /// Balance at the start of `startDate`: today's total, wound back by everything posted since.
     var startingBalance: Double {
-        let now = accounts.reduce(0) { $0 + $1.balance }
+        let now = includedAccounts.reduce(0) { $0 + $1.balance }
         let start = Calendar.current.startOfDay(for: startDate)
         guard start < Calendar.current.startOfDay(for: Date()) else { return now }
-        return now - transactions.filter { $0.date >= start }.reduce(0) { $0 + $1.amount }
+        return now - transactions.filter { $0.date >= start && (selectedIds?.contains($0.accountId) ?? true) }.reduce(0) { $0 + $1.amount }
     }
 
     var forecast: [ForecastMonth] {
@@ -30,7 +50,8 @@ struct ForecastView: View {
                 months: monthsToShow, includeEnvelopes: includeEnvelopes,
                 fallbackAverageVariable: fallbackAverage, inferIncomeFromHistory: inferIncome,
                 startingBalance: startingBalance, from: startDate
-            )
+            ),
+            accountIds: selectedIds
         )
     }
 
@@ -64,6 +85,13 @@ struct ForecastView: View {
             Picker("Horizon", selection: $monthsToShow) {
                 Text("3 months").tag(3); Text("6 months").tag(6); Text("12 months").tag(12); Text("24 months").tag(24)
             }.pickerStyle(.segmented).frame(width: 330)
+            Menu {
+                Button("All accounts") { accountIdsRaw = "" }
+                Divider()
+                ForEach(accounts) { a in Toggle(a.name, isOn: isIncluded(a)) }
+            } label: { Label(accountsLabel, systemImage: "building.columns") }
+                .fixedSize()
+                .help("Choose which accounts the forecast covers")
             DatePicker("Start", selection: $startDate, in: ...Date(), displayedComponents: .date).font(.caption)
             Button("Today") { startDate = Calendar.current.startOfDay(for: Date()) }.font(.caption).disabled(Calendar.current.isDateInToday(startDate))
             Toggle("Include envelopes", isOn: $includeEnvelopes).font(.caption)
