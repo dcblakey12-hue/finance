@@ -13,6 +13,8 @@ struct ScheduledView: View {
     @State private var pendingDelete: RecurringBill?
     @State private var entering: EntryTarget?
     @State private var note = ""
+    @State private var moving: RecurringBill?
+    @State private var movedTo = Date()
 
     private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }.sorted { $0.name < $1.name } }
     private var accountNames: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
@@ -73,6 +75,9 @@ struct ScheduledView: View {
                             Button("Enter Next Payment…") { entering = EntryTarget(bill: s, date: nil) }
                             Button("Skip Next Payment") { skipNext(s) }
                         }
+                        if s.isActive, let d = s.rule.nextDate(from: Date()) {
+                            Button("Change Next Due Date…") { movedTo = d; moving = s }
+                        }
                         Button("Edit Schedule…") { editor = ScheduleEditor(existing: s, draft: draft(of: s)) }
                         if !s.occurrenceLogRaw.isEmpty {
                             Button("Forget Entered/Skipped History") { s.occurrenceLogRaw = ""; try? context.save() }
@@ -109,6 +114,25 @@ struct ScheduledView: View {
                 entering = nil
                 if let message { note = message }
             }
+        }
+        .sheet(item: $moving) { s in
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Change next due date").font(.headline)
+                Text("\(s.name) • \(s.rule.summary())").font(.callout).foregroundStyle(.secondary)
+                DatePicker("Next due", selection: $movedTo, in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
+                Text("Anything due before this date is skipped. Weekly and every-2-weeks schedules repeat from it; monthly ones use its day of the month.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { moving = nil }.keyboardShortcut(.cancelAction)
+                    Button("Change") {
+                        ScheduleService.setNextDue(s, to: movedTo, in: context)
+                        note = "\(s.name) is now next due \(movedTo.formatted(.dateTime.month(.abbreviated).day()))."
+                        moving = nil
+                    }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(20).frame(width: 400)
         }
         .sheet(item: $editor) { ed in
             ScheduleEditorSheet(editor: ed, categories: categories, accounts: accountChoices) { result in

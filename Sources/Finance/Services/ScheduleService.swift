@@ -314,6 +314,33 @@ enum ScheduleService {
         try? context.save()
     }
 
+    /// Make `newDate` the next due date. Payments before it are skipped; then the schedule is moved:
+    /// weekly / every-2-weeks repeat from it, monthly uses its day of the month (capped at the 28th),
+    /// twice-a-month swaps it in for whichever of its two days is due next.
+    @MainActor
+    static func setNextDue(_ bill: RecurringBill, to newDate: Date, today: Date = Date(),
+                           calendar: Calendar = .current, in context: ModelContext) {
+        let target = calendar.startOfDay(for: newDate)
+        var guardCount = 0
+        while guardCount < 60, let next = bill.rule.nextDate(from: today, calendar: calendar), next < target {
+            bill.record(.skipped, on: next)
+            guardCount += 1
+        }
+        let day = min(calendar.component(.day, from: target), 28)
+        switch bill.rule.frequency {
+        case .weekly, .biweekly:
+            bill.anchorDate = target
+        case .monthly:
+            bill.dueDay = day
+        case .semimonthly:
+            // Replace the day that was due next (the first of the two if it can't be told).
+            let next = bill.rule.nextDate(from: today, calendar: calendar)
+            let nextDay = next.map { calendar.component(.day, from: $0) }
+            if nextDay == bill.secondDay { bill.secondDay = day } else { bill.dueDay = day }
+        }
+        try? context.save()
+    }
+
     /// Schedules in the order they come due: the next payment first, then the rest through the
     /// month, then the ones whose day has already passed (they roll over to next month).
     /// Paused schedules go last.
