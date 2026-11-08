@@ -56,7 +56,7 @@ struct ScheduledView: View {
                         if s.isActive, let d = s.rule.nextDate(from: Date()) {
                             // Click the date to change it; picking a new one saves immediately.
                             DueDateCell(date: d) { ScheduleService.setNextDue(s, to: $0, in: context) }
-                        } else { Text("—").foregroundStyle(.secondary) }
+                        } else { Text(s.isActive && s.endDate != nil ? "Ended" : "—").foregroundStyle(.secondary) }
                     }.width(120)
                     TableColumn("Amount") { s in
                         Text(currency.string(from: NSNumber(value: s.signedAmount)) ?? "")
@@ -180,7 +180,7 @@ struct ScheduledView: View {
                       isActive: s.isActive, isTransfer: s.isTransfer,
                       fromAccountId: s.fromAccountId, toAccountId: s.toAccountId,
                       frequency: s.rule.frequency, secondDay: s.secondDay, startDate: s.anchorDate,
-                      accountId: s.accountId)
+                      accountId: s.accountId, endDate: s.endDate)
     }
 
     private func total(_ title: String, _ value: Double, _ color: Color) -> some View {
@@ -250,6 +250,10 @@ struct ScheduleEditorSheet: View {
     var onNextDue: (Date) -> Void = { _ in }
 
     @State private var nextDue = Date()
+    /// 0 = never ends, 1 = after a number of payments, 2 = on a date.
+    @State private var endMode = 0
+    @State private var paymentsText = "12"
+    @State private var endOn = Calendar.current.date(byAdding: .year, value: 1, to: Date()) ?? Date()
     @State private var originalNextDue: Date?
     @State private var draft = ScheduleDraft(name: "", amount: 0, dueDay: 1, category: "Other", isIncome: false)
     @State private var amountText = ""
@@ -260,10 +264,18 @@ struct ScheduleEditorSheet: View {
     private var transferOK: Bool {
         !draft.isTransfer || (draft.fromAccountId != nil && draft.toAccountId != nil && draft.fromAccountId != draft.toAccountId)
     }
+    /// The date of the nth upcoming payment under the pattern being edited.
+    private func countedEnd(_ n: Int) -> Date? {
+        var rule = draft.rule
+        rule.end = nil
+        rule.excluded = editor.existing?.rule.excluded ?? []
+        return rule.nthDate(n, from: Date())
+    }
+    private var endOK: Bool { endMode != 1 || ((Int(paymentsText) ?? 0) >= 1 && countedEnd(Int(paymentsText) ?? 1) != nil) }
     private var accountOK: Bool { draft.isTransfer || accounts.isEmpty || draft.accountId != nil }
     private var canSave: Bool {
         !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && (parsedAmount ?? 0) > 0 && transferOK
-            && draft.scheduleIsValid && accountOK
+            && draft.scheduleIsValid && accountOK && endOK
     }
     private var startDateBinding: Binding<Date> {
         Binding(get: { draft.startDate ?? Date() }, set: { draft.startDate = $0 })
@@ -305,6 +317,20 @@ struct ScheduleEditorSheet: View {
                     DatePicker(draft.isIncome ? "A payday" : "A date it lands on", selection: startDateBinding, displayedComponents: .date)
                     Text("Repeats \(draft.frequency == .weekly ? "every week" : "every 2 weeks") from this date: \(draft.rule.summary()).")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+                Picker("Ends", selection: $endMode) {
+                    Text("Never").tag(0)
+                    Text("After a number of payments").tag(1)
+                    Text("On a date").tag(2)
+                }
+                if endMode == 1 {
+                    TextField("Number of payments", text: $paymentsText)
+                    if let n = Int(paymentsText), n >= 1, let last = countedEnd(n) {
+                        Text("The last one lands on \(last.formatted(.dateTime.month(.abbreviated).day().year())).")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } else if endMode == 2 {
+                    DatePicker("Last day", selection: $endOn, displayedComponents: .date)
                 }
                 if draft.isTransfer {
                     Picker("From account", selection: $draft.fromAccountId) {
@@ -352,6 +378,11 @@ struct ScheduleEditorSheet: View {
                     if d.frequency == .weekly || d.frequency == .biweekly { d.startDate = d.startDate ?? Date() }
                     else { d.startDate = nil }
                     d.name = d.name.trimmingCharacters(in: .whitespaces)
+                    switch endMode {
+                    case 1: d.endDate = Int(paymentsText).flatMap { countedEnd($0) }
+                    case 2: d.endDate = Calendar.current.startOfDay(for: endOn)
+                    default: d.endDate = nil
+                    }
                     if d.isTransfer { d.category = Categorizer.transfer; d.isIncome = false }
                     else if d.isIncome { d.category = "Income" }
                     else if d.category == "Income" || d.category == Categorizer.transfer { d.category = "Other" }
@@ -367,6 +398,7 @@ struct ScheduleEditorSheet: View {
         .frame(width: 420)
         .onAppear {
             draft = editor.draft
+            if let e = editor.draft.endDate { endMode = 2; endOn = e }
             if let b = editor.existing, b.isActive, let d = b.rule.nextDate(from: Date()) { nextDue = d; originalNextDue = d }
             if draft.accountId == nil && !draft.isTransfer {
                 // Default to a checking/savings account the first time (never a card just because it sorts first).

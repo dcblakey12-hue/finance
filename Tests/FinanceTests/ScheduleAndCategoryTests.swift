@@ -1170,3 +1170,17 @@ final class ReconciledTests: XCTestCase {
         XCTAssertFalse(tx(ManualTransactionService.prefix + "1").isReconciled)   // typed in by hand
     }
 }
+
+final class ScheduleEndTests: XCTestCase {
+    func testEndDateStopsOccurrencesAndNthDateCounts() {
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!
+        func d(_ y: Int, _ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: y, month: m, day: day))! }
+        var rule = ScheduleRule(frequency: .monthly, dueDay: 15)
+        XCTAssertEqual(rule.nthDate(3, from: d(2026, 11, 8), calendar: cal), d(2027, 1, 15))   // Nov, Dec, Jan
+        rule.end = d(2027, 1, 15)
+        XCTAssertTrue(rule.occurs(on: d(2027, 1, 15), calendar: cal))
+        XCTAssertFalse(rule.occurs(on: d(2027, 2, 15), calendar: cal))
+        XCTAssertEqual(rule.dates(from: d(2026, 11, 1), to: d(2027, 6, 1), calendar: cal).count, 3)
+        XCTAssertNil(rule.nextDate(from: d(2027, 1, 16), calendar: cal))
+    }
+}

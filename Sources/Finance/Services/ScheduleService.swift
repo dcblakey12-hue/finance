@@ -24,6 +24,8 @@ struct ScheduleRule: Equatable {
     var anchor: Date? = nil
     /// Specific days (start of day) to leave out, e.g. payments already entered or skipped.
     var excluded: Set<Date> = []
+    /// No occurrences after this day (nil = never ends).
+    var end: Date? = nil
 
     static let fallbackAnchor = Date(timeIntervalSinceReferenceDate: 0)
 
@@ -34,6 +36,7 @@ struct ScheduleRule: Equatable {
     }
 
     func occurs(on date: Date, calendar: Calendar = .current) -> Bool {
+        if let end, calendar.startOfDay(for: date) > calendar.startOfDay(for: end) { return false }
         if !excluded.isEmpty, excluded.contains(calendar.startOfDay(for: date)) { return false }
         switch frequency {
         case .monthly:
@@ -73,6 +76,22 @@ struct ScheduleRule: Equatable {
         return nil
     }
 
+    /// The date of the nth upcoming occurrence on or after `from` (n = 1 is the next one), ignoring `end`.
+    func nthDate(_ n: Int, from: Date, calendar: Calendar = .current) -> Date? {
+        guard n >= 1 else { return nil }
+        var open = self; open.end = nil
+        var day = calendar.startOfDay(for: from)
+        var found = 0
+        for _ in 0..<(n * 400) {
+            guard let d = open.nextDate(from: day, calendar: calendar) else { return nil }
+            found += 1
+            if found == n { return d }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: d) else { return nil }
+            day = next
+        }
+        return nil
+    }
+
     /// Average number of times per month, for monthly totals and budgets.
     var monthlyFactor: Double {
         switch frequency {
@@ -84,6 +103,12 @@ struct ScheduleRule: Equatable {
     }
 
     func summary(calendar: Calendar = .current) -> String {
+        let base = baseSummary(calendar: calendar)
+        guard let end else { return base }
+        return "\(base), ends \(end.formatted(.dateTime.month(.abbreviated).day().year()))"
+    }
+
+    private func baseSummary(calendar: Calendar) -> String {
         func ordinal(_ n: Int) -> String {
             let f = NumberFormatter(); f.numberStyle = .ordinal
             return f.string(from: NSNumber(value: n)) ?? "\(n)"
@@ -164,8 +189,10 @@ struct ScheduleDraft: Equatable {
     var startDate: Date? = nil
     /// The account (OFX accountId) a bill is paid from or a payday arrives in. Not used for transfers.
     var accountId: String? = nil
+    /// Last day it can land on (nil = never ends).
+    var endDate: Date? = nil
 
-    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: startDate) }
+    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: startDate, end: endDate) }
     /// Valid when the chosen pattern is complete (twice a month needs two different days).
     var scheduleIsValid: Bool { frequency != .semimonthly || min(max(dueDay, 1), 31) != min(max(secondDay, 1), 31) }
 }
@@ -209,6 +236,7 @@ enum ScheduleService {
             s.fromAccountId = from; s.toAccountId = to
             s.frequencyRaw = d.frequency.rawValue; s.secondDay = d.secondDay; s.anchorDate = d.startDate
             s.accountId = d.isTransfer ? nil : d.accountId
+            s.endDate = d.endDate
         } else {
             let s = RecurringBill(name: d.name, amount: abs(d.amount), dueDay: d.dueDay, category: category,
                                   isActive: d.isActive, isIncome: d.isIncome && !d.isTransfer)
@@ -216,6 +244,7 @@ enum ScheduleService {
             s.frequencyRaw = d.frequency.rawValue; s.secondDay = d.secondDay; s.anchorDate = d.startDate
             s.trackedSince = Calendar.current.startOfDay(for: Date())
             s.accountId = d.isTransfer ? nil : d.accountId
+            s.endDate = d.endDate
             context.insert(s)
         }
         try? context.save()
@@ -400,7 +429,9 @@ struct ScheduleItem: Equatable {
     var accountId: String? = nil
     /// The RecurringBill this was built from (nil in tests / ad-hoc items).
     var billId: UUID? = nil
-    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: anchor, excluded: excluded) }
+    /// Last day it can land on (nil = never ends).
+    var endDate: Date? = nil
+    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: anchor, excluded: excluded, end: endDate) }
     /// Average amount per month (signed), counting every repeat.
     var monthlyAmount: Double { amount * rule.monthlyFactor }
     var isIncome: Bool { !isTransfer && amount > 0 }
@@ -548,14 +579,14 @@ extension RecurringBill {
         return ScheduleItem(name: name, amount: signedAmount, dueDay: dueDay, category: category,
                             isTransfer: isTransfer, fromAccountId: fromAccountId, toAccountId: toAccountId, detail: detail,
                             frequency: rule.frequency, secondDay: secondDay, anchor: anchorDate, excluded: rule.excluded,
-                            accountId: accountId, billId: id)
+                            accountId: accountId, billId: id, endDate: endDate)
     }
     var item: ScheduleItem { item() }
 
     var rule: ScheduleRule {
         ScheduleRule(frequency: ScheduleFrequency(rawValue: frequencyRaw) ?? .monthly,
                      dueDay: dueDay, secondDay: secondDay, anchor: anchorDate,
-                     excluded: Set(occurrenceLog.keys.compactMap { OccurrenceLog.date(fromKey: $0) }))
+                     excluded: Set(occurrenceLog.keys.compactMap { OccurrenceLog.date(fromKey: $0) }), end: endDate)
     }
 
     /// Dealt-with occurrences by day key ("yyyy-MM-dd").

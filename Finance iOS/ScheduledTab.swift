@@ -194,7 +194,7 @@ struct ScheduleForm: View {
                                       isIncome: s.isIncome, isActive: s.isActive, isTransfer: s.isTransfer,
                                       fromAccountId: s.fromAccountId, toAccountId: s.toAccountId,
                                       frequency: s.rule.frequency, secondDay: s.secondDay, startDate: s.anchorDate,
-                                      accountId: s.accountId)
+                                      accountId: s.accountId, endDate: s.endDate)
                 amountText = String(format: "%.2f", abs(s.amount))
             }
             if draft.accountId == nil && !draft.isTransfer { draft.accountId = accounts.first?.accountId }
