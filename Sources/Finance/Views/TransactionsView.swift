@@ -233,7 +233,7 @@ struct TransactionsView: View {
         }
         .sheet(item: $scheduleEditor) { ed in
             ScheduleEditorSheet(editor: ed, categories: BudgetService.allCategories(stored: customCategories.map(\.name)),
-                                accounts: accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }) { draft in
+                                accounts: accounts.map { AccountChoice(id: $0.accountId, name: $0.name, isCash: [.checking, .savings, .cash].contains($0.type)) }) { draft in
                 ScheduleEditor.save(draft, existing: nil, in: context)
                 scheduleEditor = nil
                 status = "Scheduled \(draft.name): \(draft.rule.summary()). See Scheduled Transactions."

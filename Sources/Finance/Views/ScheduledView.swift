@@ -14,7 +14,7 @@ struct ScheduledView: View {
     @State private var entering: EntryTarget?
     @State private var note = ""
 
-    private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }.sorted { $0.name < $1.name } }
+    private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name, isCash: [.checking, .savings, .cash].contains($0.type)) }.sorted { $0.name < $1.name } }
     private var accountNames: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
     private func routeText(_ s: RecurringBill) -> String { s.item(accountNames: accountNames).detail ?? "Transfer" }
     private var categories: [String] { BudgetService.allCategories(stored: customCategories.map(\.name)) }
@@ -236,6 +236,8 @@ struct ScheduleEditor: Identifiable {
 struct AccountChoice: Identifiable, Hashable {
     let id: String      // OFX accountId
     let name: String
+    /// Checking, savings or cash: where paydays and bills normally belong.
+    var isCash: Bool = true
 }
 
 struct ScheduleEditorSheet: View {
@@ -367,8 +369,8 @@ struct ScheduleEditorSheet: View {
             draft = editor.draft
             if let b = editor.existing, b.isActive, let d = b.rule.nextDate(from: Date()) { nextDue = d; originalNextDue = d }
             if draft.accountId == nil && !draft.isTransfer {
-                // Default to a checking-type account the first time (accounts are listed by name).
-                draft.accountId = accounts.first?.id
+                // Default to a checking/savings account the first time (never a card just because it sorts first).
+                draft.accountId = (accounts.first { $0.isCash } ?? accounts.first)?.id
             }
             amountText = editor.draft.amount > 0 ? String(format: "%.2f", editor.draft.amount) : ""
         }
