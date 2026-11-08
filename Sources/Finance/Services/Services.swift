@@ -55,7 +55,7 @@ final class TransactionImportService {
 extension TransactionRecord {
     /// Confirmed by the bank: it came from a bank sync or a file import. Hand-entered transactions
     /// (typed in, or entered from a scheduled payment) stay unreconciled until the bank reports them.
-    var isReconciled: Bool { !ManualTransactionService.isManual(self) }
+    @MainActor var isReconciled: Bool { !ManualTransactionService.isManual(self) }
 }
 
 // MARK: - Hand-entered transactions
