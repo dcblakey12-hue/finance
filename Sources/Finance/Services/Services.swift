@@ -443,7 +443,7 @@ struct BackupFile: Codable, Equatable {
         var id: UUID; var name: String; var amount: Double; var dueDay: Int; var category: String; var isActive: Bool
         var lastPaid: Date?; var kindRaw: String; var fromAccountId: String?; var toAccountId: String?
         var frequencyRaw: String; var secondDay: Int; var anchorDate: Date?; var occurrenceLogRaw: String
-        var accountId: String?; var trackedSince: Date?
+        var accountId: String?; var trackedSince: Date?; var endDate: Date?
     }
     struct ProfileRow: Codable, Equatable { var id: UUID; var bankName: String; var ofxHomeURL: String; var username: String; var accountId: String; var clientUID: String; var lastSync: Date? }
     struct RuleRow: Codable, Equatable { var merchantKey: String; var category: String; var createdAt: Date; var updatedAt: Date }
@@ -473,7 +473,7 @@ enum BackupService {
             accounts: all(Account.self).map { .init(id: $0.id, name: $0.name, typeRaw: $0.typeRaw, accountId: $0.accountId, bankName: $0.bankName, balance: $0.balance) },
             transactions: all(TransactionRecord.self).map { .init(id: $0.id, fitid: $0.fitid, accountId: $0.accountId, accountName: $0.accountName, date: $0.date, name: $0.name, amount: $0.amount, typeRaw: $0.typeRaw, category: $0.category, memo: $0.memo, transferPeerId: $0.transferPeerId) },
             envelopes: all(Envelope.self).map { .init(id: $0.id, category: $0.category, year: $0.year, month: $0.month, allocated: $0.allocated) },
-            schedules: all(RecurringBill.self).map { .init(id: $0.id, name: $0.name, amount: $0.amount, dueDay: $0.dueDay, category: $0.category, isActive: $0.isActive, lastPaid: $0.lastPaid, kindRaw: $0.kindRaw, fromAccountId: $0.fromAccountId, toAccountId: $0.toAccountId, frequencyRaw: $0.frequencyRaw, secondDay: $0.secondDay, anchorDate: $0.anchorDate, occurrenceLogRaw: $0.occurrenceLogRaw, accountId: $0.accountId, trackedSince: $0.trackedSince) },
+            schedules: all(RecurringBill.self).map { .init(id: $0.id, name: $0.name, amount: $0.amount, dueDay: $0.dueDay, category: $0.category, isActive: $0.isActive, lastPaid: $0.lastPaid, kindRaw: $0.kindRaw, fromAccountId: $0.fromAccountId, toAccountId: $0.toAccountId, frequencyRaw: $0.frequencyRaw, secondDay: $0.secondDay, anchorDate: $0.anchorDate, occurrenceLogRaw: $0.occurrenceLogRaw, accountId: $0.accountId, trackedSince: $0.trackedSince, endDate: $0.endDate) },
             profiles: all(OFXProfile.self).map { .init(id: $0.id, bankName: $0.bankName, ofxHomeURL: $0.ofxHomeURL, username: $0.username, accountId: $0.accountId, clientUID: $0.clientUID, lastSync: $0.lastSync) },
             rules: all(CategoryRule.self).map { .init(merchantKey: $0.merchantKey, category: $0.category, createdAt: $0.createdAt, updatedAt: $0.updatedAt) },
             categories: all(CustomCategory.self).map { .init(name: $0.name, createdAt: $0.createdAt) })
@@ -509,7 +509,7 @@ enum BackupService {
             let b = RecurringBill(id: s.id, name: s.name, amount: s.amount, dueDay: s.dueDay, category: s.category, isActive: s.isActive)
             b.lastPaid = s.lastPaid; b.kindRaw = s.kindRaw; b.fromAccountId = s.fromAccountId; b.toAccountId = s.toAccountId
             b.frequencyRaw = s.frequencyRaw; b.secondDay = s.secondDay; b.anchorDate = s.anchorDate
-            b.occurrenceLogRaw = s.occurrenceLogRaw; b.accountId = s.accountId; b.trackedSince = s.trackedSince
+            b.occurrenceLogRaw = s.occurrenceLogRaw; b.accountId = s.accountId; b.trackedSince = s.trackedSince; b.endDate = s.endDate
             context.insert(b)
         }
         for p in file.profiles {

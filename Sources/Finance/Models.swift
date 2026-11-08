@@ -111,6 +111,8 @@ final class RecurringBill {
     var accountId: String? = nil
     /// Payments dated before this day are never treated as overdue (set when the schedule is created).
     var trackedSince: Date? = nil
+    /// Last day this schedule can land on (nil = repeats forever), e.g. the final payment of a loan.
+    var endDate: Date? = nil
 
     init(id: UUID = UUID(), name: String, amount: Double, dueDay: Int, category: String, isActive: Bool = true, isIncome: Bool = false) {
         self.id = id; self.name = name; self.amount = amount; self.dueDay = dueDay

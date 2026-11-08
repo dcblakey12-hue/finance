@@ -275,7 +275,7 @@ struct CalendarView: View {
         afterDismiss { editor = ScheduleEditor(existing: bill, draft: ScheduleDraft(
             name: bill.name, amount: abs(bill.amount), dueDay: bill.dueDay, category: bill.category, isIncome: bill.isIncome,
             isActive: bill.isActive, isTransfer: bill.isTransfer, fromAccountId: bill.fromAccountId, toAccountId: bill.toAccountId,
-            frequency: bill.rule.frequency, secondDay: bill.secondDay, startDate: bill.anchorDate, accountId: bill.accountId)) }
+            frequency: bill.rule.frequency, secondDay: bill.secondDay, startDate: bill.anchorDate, accountId: bill.accountId, endDate: bill.endDate)) }
     }
 
     /// A sheet must finish closing before the next opens, or macOS leaves the window unclickable.
