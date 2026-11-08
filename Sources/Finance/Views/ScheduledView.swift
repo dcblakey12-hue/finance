@@ -56,9 +56,14 @@ struct ScheduledView: View {
                     TableColumn("Repeats") { s in Text(s.rule.summary()) }.width(min: 130, ideal: 170)
                     TableColumn("Next due") { s in
                         if s.isActive, let d = s.rule.nextDate(from: Date()) {
-                            Text(d, format: .dateTime.month(.abbreviated).day().year())
+                            // Edit the date right here; changing it saves immediately.
+                            DatePicker("", selection: Binding(
+                                get: { d },
+                                set: { ScheduleService.setNextDue(s, to: $0, in: context) }
+                            ), in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
+                            .labelsHidden()
                         } else { Text("—").foregroundStyle(.secondary) }
-                    }.width(100)
+                    }.width(120)
                     TableColumn("Amount") { s in
                         Text(currency.string(from: NSNumber(value: s.signedAmount)) ?? "")
                             .monospacedDigit().foregroundStyle(s.isIncome ? .green : (s.isTransfer ? .blue : .primary))
