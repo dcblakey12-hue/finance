@@ -289,14 +289,14 @@ struct ScheduleEditorSheet: View {
                 switch draft.frequency {
                 case .monthly:
                     Picker(draft.isIncome ? "Payday" : (draft.isTransfer ? "Day" : "Due day"), selection: $draft.dueDay) {
-                        ForEach(1...28, id: \.self) { Text(ordinal($0)).tag($0) }
+                        ForEach(1...31, id: \.self) { Text(ordinal($0)).tag($0) }
                     }
                 case .semimonthly:
                     Picker("First day", selection: $draft.dueDay) {
-                        ForEach(1...28, id: \.self) { Text(ordinal($0)).tag($0) }
+                        ForEach(1...31, id: \.self) { Text(ordinal($0)).tag($0) }
                     }
                     Picker("Second day", selection: $draft.secondDay) {
-                        ForEach(1...28, id: \.self) { Text(ordinal($0)).tag($0) }
+                        ForEach(1...31, id: \.self) { Text(ordinal($0)).tag($0) }
                     }
                     if !draft.scheduleIsValid { Text("Pick two different days.").font(.caption).foregroundStyle(.red) }
                 case .weekly, .biweekly:
@@ -340,7 +340,7 @@ struct ScheduleEditorSheet: View {
             }
             .formStyle(.grouped)
             Text(draft.isTransfer ? "Moves money between two of your accounts. It doesn't count as income or spending, and it shows on the calendar."
-                                     : "Days of the month are capped at the 28th so every month has one.")
+                                     : "Days past the end of a short month (29th–31st) land on that month's last day.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()

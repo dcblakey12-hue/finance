@@ -111,7 +111,7 @@ enum CashFlowForecastService: Sendable {
                 if i < rules.count, let rule = rules[i] {
                     let monthEnd = cal.date(byAdding: DateComponents(month: 1, day: -1), to: monthDate) ?? monthDate
                     dues = rule.dates(from: monthDate, to: monthEnd, calendar: cal)
-                } else if let due = cal.date(from: DateComponents(year: y, month: m, day: max(1, min(28, b.dueDay)))) {
+                } else if let due = cal.date(from: DateComponents(year: y, month: m, day: max(1, min(b.dueDay, cal.range(of: .day, in: .month, for: monthDate)?.count ?? 28)))) {
                     dues = [due]
                 }
                 for due in dues {

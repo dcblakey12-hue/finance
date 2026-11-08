@@ -27,16 +27,20 @@ struct ScheduleRule: Equatable {
 
     static let fallbackAnchor = Date(timeIntervalSinceReferenceDate: 0)
 
-    private static func clamp(_ d: Int) -> Int { min(max(d, 1), 28) }
+    private static func clamp(_ d: Int) -> Int { min(max(d, 1), 31) }
+    /// The day a "31st" repeat actually lands on in `date`'s month: the last day if the month is shorter.
+    private static func landing(_ d: Int, in date: Date, calendar: Calendar) -> Int {
+        min(clamp(d), calendar.range(of: .day, in: .month, for: date)?.count ?? 28)
+    }
 
     func occurs(on date: Date, calendar: Calendar = .current) -> Bool {
         if !excluded.isEmpty, excluded.contains(calendar.startOfDay(for: date)) { return false }
         switch frequency {
         case .monthly:
-            return calendar.component(.day, from: date) == Self.clamp(dueDay)
+            return calendar.component(.day, from: date) == Self.landing(dueDay, in: date, calendar: calendar)
         case .semimonthly:
             let d = calendar.component(.day, from: date)
-            return d == Self.clamp(dueDay) || d == Self.clamp(secondDay)
+            return d == Self.landing(dueDay, in: date, calendar: calendar) || d == Self.landing(secondDay, in: date, calendar: calendar)
         case .weekly, .biweekly:
             let start = calendar.startOfDay(for: anchor ?? Self.fallbackAnchor)
             let days = calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: date)).day ?? 1
@@ -146,7 +150,7 @@ struct OverdueItem: Identifiable {
 struct ScheduleDraft: Equatable {
     var name: String
     var amount: Double      // always positive; `isIncome` gives the direction
-    var dueDay: Int         // 1...28
+    var dueDay: Int         // 1...31 (a day past the end of a short month lands on its last day)
     var category: String
     var isIncome: Bool
     var isActive: Bool = true
@@ -163,12 +167,12 @@ struct ScheduleDraft: Equatable {
 
     var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: startDate) }
     /// Valid when the chosen pattern is complete (twice a month needs two different days).
-    var scheduleIsValid: Bool { frequency != .semimonthly || min(max(dueDay, 1), 28) != min(max(secondDay, 1), 28) }
+    var scheduleIsValid: Bool { frequency != .semimonthly || min(max(dueDay, 1), 31) != min(max(secondDay, 1), 31) }
 }
 
 enum ScheduleService {
     /// Pre-fill a schedule from an existing transaction: same merchant, amount,
-    /// and day of month (clamped to 28, the latest day every month has).
+    /// and day of month (31 allowed; short months use their last day).
     static func draft(fromName name: String, amount: Double, date: Date, category: String,
                       accountId: String? = nil,
                       transferFrom: String? = nil, transferTo: String? = nil,
@@ -178,7 +182,7 @@ enum ScheduleService {
         let merchant = MerchantNormalizer.key(for: name)
         let displayName = merchant.isEmpty ? name : merchant.capitalized
         if let from = transferFrom, let to = transferTo, from != to {
-            return ScheduleDraft(name: displayName, amount: abs(amount), dueDay: min(max(day, 1), 28),
+            return ScheduleDraft(name: displayName, amount: abs(amount), dueDay: min(max(day, 1), 31),
                                  category: Categorizer.transfer, isIncome: false,
                                  isTransfer: true, fromAccountId: from, toAccountId: to)
         }
@@ -186,7 +190,7 @@ enum ScheduleService {
         if isIncome { cat = "Income" }
         else if category == Categorizer.uncategorized { cat = "Other" }
         else { cat = category }
-        var d = ScheduleDraft(name: displayName, amount: abs(amount), dueDay: min(max(day, 1), 28),
+        var d = ScheduleDraft(name: displayName, amount: abs(amount), dueDay: min(max(day, 1), 31),
                               category: cat, isIncome: isIncome)
         d.accountId = accountId
         return d
@@ -335,7 +339,7 @@ enum ScheduleService {
             bill.record(.skipped, on: next)
             guardCount += 1
         }
-        let day = min(calendar.component(.day, from: target), 28)
+        let day = min(calendar.component(.day, from: target), 31)
         switch bill.rule.frequency {
         case .weekly, .biweekly:
             bill.anchorDate = target
@@ -363,12 +367,12 @@ enum ScheduleService {
 
     /// Next date on or after `from` (start of day) that falls on `dueDay`.
     static func nextDueDate(dueDay: Int, from: Date, calendar: Calendar = .current) -> Date? {
-        let day = min(max(dueDay, 1), 28)
+        let wanted = min(max(dueDay, 1), 31)
         let today = calendar.startOfDay(for: from)
         for offset in 0..<2 {
             guard let monthDate = calendar.date(byAdding: .month, value: offset, to: today) else { continue }
             var comps = calendar.dateComponents([.year, .month], from: monthDate)
-            comps.day = day
+            comps.day = min(wanted, calendar.range(of: .day, in: .month, for: monthDate)?.count ?? 28)
             if let due = calendar.date(from: comps), due >= today { return due }
         }
         return nil
@@ -431,7 +435,7 @@ struct LedgerEntry {
 }
 
 enum CashCalendar {
-    static func clampedDay(_ d: Int) -> Int { min(max(d, 1), 28) }
+    static func clampedDay(_ d: Int) -> Int { min(max(d, 1), 31) }
 
     /// Month grid (whole weeks) with scheduled events on each day and a running balance.
     /// From today on, the balance starts at `balanceToday` and applies scheduled items.

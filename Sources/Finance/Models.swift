@@ -90,7 +90,7 @@ final class RecurringBill {
     var id: UUID = UUID()
     var name: String = ""
     var amount: Double = 0
-    var dueDay: Int = 1          // 1..28 (avoid month-end edge cases for v1)
+    var dueDay: Int = 1          // 1..31; a day past the end of a short month lands on its last day
     var category: String = ""
     var isActive: Bool = true
     var lastPaid: Date?

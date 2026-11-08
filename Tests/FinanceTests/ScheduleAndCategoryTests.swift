@@ -1144,3 +1144,17 @@ final class DashboardMathTests: XCTestCase {
         XCTAssertEqual(r.upcoming.map(\.name), ["Rent", "Pay"])
     }
 }
+
+final class MonthEndTests: XCTestCase {
+    func testThirtyFirstLandsOnLastDayOfShortMonths() {
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!
+        func d(_ y: Int, _ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: y, month: m, day: day))! }
+        let rule = ScheduleRule(frequency: .monthly, dueDay: 31)
+        XCTAssertTrue(rule.occurs(on: d(2026, 1, 31), calendar: cal))
+        XCTAssertTrue(rule.occurs(on: d(2026, 2, 28), calendar: cal))
+        XCTAssertFalse(rule.occurs(on: d(2026, 2, 27), calendar: cal))
+        XCTAssertTrue(rule.occurs(on: d(2026, 4, 30), calendar: cal))
+        let twice = ScheduleRule(frequency: .semimonthly, dueDay: 15, secondDay: 31)
+        XCTAssertEqual(twice.dates(from: d(2026, 2, 1), to: d(2026, 2, 28), calendar: cal), [d(2026, 2, 15), d(2026, 2, 28)])
+    }
+}
