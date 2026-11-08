@@ -429,7 +429,7 @@ struct EnterScheduledSheet: View {
                 }
             }
             .formStyle(.grouped)
-            Text("Enter adds a real transaction and updates the account balance; change the date or amount if this one differs. Skip leaves this payment out and moves to the next one. Importing your bank file later replaces an entered transaction that matches.")
+            Text("Enter adds a real transaction and updates the account balance; change the date or amount if this one differs. Save Date Only just moves the due date and books nothing. Skip leaves this payment out and moves to the next one. Importing your bank file later replaces an entered transaction that matches.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button("Skip This One") {
@@ -438,6 +438,13 @@ struct EnterScheduledSheet: View {
                 }.disabled(occurrence == nil)
                 Spacer()
                 Button("Cancel") { onDone(nil) }.keyboardShortcut(.cancelAction)
+                Button("Save Date Only") {
+                    ScheduleService.setNextDue(bill, to: postedOn, in: context)
+                    onDone("\(bill.name) is now next due \(postedOn.formatted(.dateTime.month(.twoDigits).day(.twoDigits).year())). Nothing was booked.")
+                }
+                .help("Change when this is next due without adding a transaction")
+                .disabled(occurrenceOverride != nil || occurrence == nil
+                          || Calendar.current.startOfDay(for: postedOn) == Calendar.current.startOfDay(for: occurrence ?? postedOn))
                 Button("Enter Transaction") {
                     guard let due = occurrence, let amt = amount else { return }
                     let ok = ScheduleService.enter(bill, occurrence: due, postedOn: postedOn, amount: amt,
