@@ -321,6 +321,13 @@ enum ScheduleService {
     static func setNextDue(_ bill: RecurringBill, to newDate: Date, today: Date = Date(),
                            calendar: Calendar = .current, in context: ModelContext) {
         let target = calendar.startOfDay(for: newDate)
+        // Earlier moves may have skipped upcoming payments; forget those so the date can move back too.
+        let todayStart = calendar.startOfDay(for: today)
+        var log = bill.occurrenceLog
+        for (k, status) in log where status == .skipped {
+            if let d = OccurrenceLog.date(fromKey: k, calendar: calendar), d >= todayStart { log[k] = nil }
+        }
+        bill.occurrenceLogRaw = OccurrenceLog.serialize(log, calendar: calendar)
         var guardCount = 0
         while guardCount < 60, let next = bill.rule.nextDate(from: today, calendar: calendar), next < target {
             bill.record(.skipped, on: next)
