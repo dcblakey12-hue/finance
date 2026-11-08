@@ -17,7 +17,7 @@ struct CalendarTab: View {
         return accounts.filter { includeAll || cash.contains($0.type) }
     }
     private var names: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
-    private var startingBalance: Double { included.reduce(0) { $0 + $1.balance } }
+    private var startingBalance: Double { BalanceBook(transactions: transactions).today(included) }
     private var actualNet: [Date: Double] {
         let ids = Set(included.map(\.accountId))
         var out: [Date: Double] = [:]
@@ -28,7 +28,14 @@ struct CalendarTab: View {
         CashCalendar.grid(month: month,
                           schedules: bills.filter(\.isActive).map { $0.item(accountNames: names) },
                           balanceToday: startingBalance, actualNetByDay: actualNet,
-                          cashAccountIds: Set(included.map(\.accountId)))
+                          cashAccountIds: Set(included.map(\.accountId)), ledger: ledgerEntries)
+    }
+    private var ledgerEntries: [LedgerEntry] {
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
+        return transactions.filter { $0.date >= tomorrow }.map {
+            LedgerEntry(date: $0.date, name: $0.name, amount: $0.amount, accountId: $0.accountId, category: $0.category,
+                        isTransfer: $0.transferPeerId != nil || $0.category == Categorizer.transfer)
+        }
     }
     private var summary: CalendarMonthSummary { CashCalendar.summary(of: days) }
 

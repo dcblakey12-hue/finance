@@ -7,6 +7,14 @@ struct CalendarView: View {
     @Query(sort: \RecurringBill.dueDay) var bills: [RecurringBill]
     @Query var accounts: [Account]
     @Query var transactions: [TransactionRecord]
+    @Query var customCategories: [CustomCategory]
+    @Environment(\.modelContext) private var context
+    @State private var editor: ScheduleEditor?
+    @State private var listDay: Date?
+    @AppStorage("calendarCellHeight") private var cellHeight: Double = 92
+    @State private var dragStartHeight: Double?
+    @State private var entering: EntryTarget?
+    @State private var listSelection: String?
     @State private var calService = CalendarService()
     @State private var month = Date()
     @State private var selected: Date?
@@ -21,7 +29,8 @@ struct CalendarView: View {
         let cash: Set<AccountType> = [.checking, .savings, .cash]
         return accounts.filter { includeAllAccounts || cash.contains($0.type) }
     }
-    private var startingBalance: Double { includedAccounts.reduce(0) { $0 + $1.balance } }
+    private var book: BalanceBook { BalanceBook(transactions: transactions) }
+    private var startingBalance: Double { book.today(includedAccounts) }
     /// Real transactions per day (included accounts), used to show past balances.
     private var actualNetByDay: [Date: Double] {
         let ids = Set(includedAccounts.map(\.accountId))
@@ -30,10 +39,20 @@ struct CalendarView: View {
         return out
     }
     private var accountNames: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
+    private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }.sorted { $0.name < $1.name } }
+    private var categories: [String] { BudgetService.allCategories(stored: customCategories.map(\.name)) }
     private var items: [ScheduleItem] { bills.filter(\.isActive).map { $0.item(accountNames: accountNames) } }
     private var days: [CalendarDay] {
         CashCalendar.grid(month: month, schedules: items, balanceToday: startingBalance, actualNetByDay: actualNetByDay,
-                              cashAccountIds: Set(includedAccounts.map(\.accountId)))
+                              cashAccountIds: Set(includedAccounts.map(\.accountId)), ledger: ledgerEntries)
+    }
+    private var includedIds: Set<String> { Set(includedAccounts.map(\.accountId)) }
+    private var ledgerEntries: [LedgerEntry] {
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
+        return transactions.filter { $0.date >= tomorrow }.map {
+            LedgerEntry(date: $0.date, name: $0.name, amount: $0.amount, accountId: $0.accountId, category: $0.category,
+                        isTransfer: $0.transferPeerId != nil || $0.category == Categorizer.transfer)
+        }
     }
     private var lowText: String {
         guard let low = summary.low else { return "—" }
@@ -62,12 +81,28 @@ struct CalendarView: View {
                 stats
                 weekdayHeader
                 grid
+                resizeHandle
                 if let sel = selected { dayDetail(sel) }
                 macCalendarBox
             }.padding()
         }
         .navigationTitle("Bills & Calendar")
         .task { await calService.requestAccess() }
+        .sheet(isPresented: Binding(get: { listDay != nil }, set: { if !$0 { listDay = nil } })) {
+            if let d = listDay { dayListSheet(d) }
+        }
+        .sheet(item: $entering) { target in
+            EnterScheduledSheet(bill: target.bill, occurrenceOverride: target.date, accounts: accounts) { message in
+                entering = nil
+                if let message { status = message }
+            }
+        }
+        .sheet(item: $editor) { ed in
+            ScheduleEditorSheet(editor: ed, categories: categories, accounts: accountChoices) { result in
+                ScheduleEditor.save(result, existing: ed.existing, in: context)
+                editor = nil
+            } onCancel: { editor = nil }
+        }
     }
 
     // MARK: - Pieces
@@ -116,6 +151,29 @@ struct CalendarView: View {
         }
     }
 
+    /// Drag the bar under the grid down to make every day box taller (up to fit more transactions), up to shrink.
+    private var resizeHandle: some View {
+        let rows = max(1, days.count / 7)
+        return HStack {
+            Spacer()
+            Capsule().fill(.secondary.opacity(0.5)).frame(width: 60, height: 5)
+            Spacer()
+        }
+        .frame(height: 16)
+        .contentShape(Rectangle())
+        .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
+        .gesture(DragGesture(minimumDistance: 1)
+            .onChanged { v in
+                let start = dragStartHeight ?? cellHeight
+                dragStartHeight = start
+                cellHeight = min(300, max(70, start + Double(v.translation.height) / Double(rows)))
+            }
+            .onEnded { _ in dragStartHeight = nil })
+        .help("Drag to resize the calendar")
+    }
+
+    private var visibleEvents: Int { max(2, Int((cellHeight - 44) / 15)) }
+
     private var grid: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 4) {
             ForEach(days) { day in dayCell(day) }
@@ -134,13 +192,13 @@ struct CalendarView: View {
                     .foregroundStyle(isToday ? Color.white : Color.primary)
                 Spacer()
             }
-            ForEach(day.events.prefix(3)) { e in
+            ForEach(day.events.prefix(visibleEvents)) { e in
                 Text("\(e.name) \(shortMoney(e.isTransfer ? e.gross : e.amount))")
                     .font(.system(size: 10)).lineLimit(1)
                     .padding(.horizontal, 3)
                     .background((e.isTransfer ? Color.blue : (e.isIncome ? Color.green : Color.red)).opacity(0.18), in: RoundedRectangle(cornerRadius: 3))
             }
-            if day.events.count > 3 { Text("+\(day.events.count - 3) more").font(.system(size: 10)).foregroundStyle(.secondary) }
+            if day.events.count > visibleEvents { Text("+\(day.events.count - visibleEvents) more").font(.system(size: 10)).foregroundStyle(.secondary) }
             Spacer(minLength: 0)
             if let bal = day.closing {
                 Text(shortMoney(bal)).font(.system(size: 10, weight: .semibold)).monospacedDigit()
@@ -149,12 +207,91 @@ struct CalendarView: View {
             }
         }
         .padding(4)
-        .frame(minHeight: 92)
+        .frame(minHeight: cellHeight)
         .background(day.inMonth ? Color.gray.opacity(0.10) : Color.gray.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(isSelected ? Color.accentColor : .clear, lineWidth: 2))
         .opacity(day.inMonth ? 1 : 0.5)
         .contentShape(Rectangle())
-        .onTapGesture { selected = day.date }
+        .onTapGesture(count: 2) {
+            selected = day.date
+            if day.events.isEmpty { newSchedule(on: day.date) } else { listDay = day.date }
+        }
+        .onTapGesture {
+            selected = day.date
+            if !day.events.isEmpty { listDay = day.date }
+        }
+    }
+
+    /// Click a day with transactions: a box listing them. Double-click a row to enter / amend / skip it.
+    private func dayListSheet(_ date: Date) -> some View {
+        let events = days.first { calendar.isDate($0.date, inSameDayAs: date) }?.events ?? []
+        let rows: [(String, ForecastEvent)] = events.enumerated().map { ($1.billId?.uuidString ?? "ledger-\($0)", $1) }
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(date.formatted(date: .complete, time: .omitted)).font(.headline)
+            Text("Double-click a row to enter it (amend the amount or date) or skip it.")
+                .font(.caption).foregroundStyle(.secondary)
+            List(selection: $listSelection) {
+                ForEach(rows, id: \.0) { (billId, e) in
+                    HStack {
+                        Text(e.name)
+                        Text(e.detail ?? e.category).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text(money(e.isTransfer ? e.gross : e.amount)).monospacedDigit()
+                            .foregroundStyle(e.isIncome ? .green : (e.isTransfer ? .blue : .primary))
+                    }
+                    .tag(billId)
+                    .contentShape(Rectangle())
+                }
+            }
+            .frame(minHeight: 160)
+            .contextMenu(forSelectionType: String.self) { ids in
+                if let bill = bill(for: ids) {
+                    Button("Enter or Skip…") { openEntry(bill, on: date) }
+                    Button("Edit Schedule…") { openEditor(bill) }
+                }
+            } primaryAction: { ids in
+                if let bill = bill(for: ids) { openEntry(bill, on: date) }
+            }
+            HStack {
+                Button("New Scheduled Transaction…") { listDay = nil; afterDismiss { newSchedule(on: date) } }
+                Spacer()
+                Button("Done") { listDay = nil }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+
+    private func bill(for ids: Set<String>) -> RecurringBill? {
+        guard ids.count == 1, let key = ids.first, let id = UUID(uuidString: key) else { return nil }
+        return bills.first { $0.id == id }
+    }
+    private func openEntry(_ bill: RecurringBill, on date: Date) {
+        listDay = nil
+        afterDismiss { entering = EntryTarget(bill: bill, date: date) }
+    }
+    private func openEditor(_ bill: RecurringBill) {
+        listDay = nil
+        afterDismiss { editor = ScheduleEditor(existing: bill, draft: ScheduleDraft(
+            name: bill.name, amount: abs(bill.amount), dueDay: bill.dueDay, category: bill.category, isIncome: bill.isIncome,
+            isActive: bill.isActive, isTransfer: bill.isTransfer, fromAccountId: bill.fromAccountId, toAccountId: bill.toAccountId,
+            frequency: bill.rule.frequency, secondDay: bill.secondDay, startDate: bill.anchorDate, accountId: bill.accountId)) }
+    }
+
+    /// A sheet must finish closing before the next opens, or macOS leaves the window unclickable.
+    private func afterDismiss(_ action: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            action()
+        }
+    }
+
+    /// Double-click an empty day: open the Schedule Transaction window with that date filled in.
+    private func newSchedule(on date: Date) {
+        let day = calendar.component(.day, from: date)
+        let draft = ScheduleDraft(name: "", amount: 0, dueDay: min(day, 28), category: "Other", isIncome: false,
+                                  startDate: calendar.startOfDay(for: date))
+        editor = ScheduleEditor(existing: nil, draft: draft)
     }
 
     private func dayDetail(_ date: Date) -> some View {

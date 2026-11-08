@@ -24,6 +24,7 @@ final class TransactionImportService {
         let rules = CategorizationService.ruleMap(in: context)
         let allowed = CategoryService.allowedBuiltIns(in: context)
         var inserted = 0, skipped = 0
+        var newlyInserted: [TransactionRecord] = []
         // Transactions typed in by hand (e.g. on the phone) that the bank has now reported.
         var manual = existingRecords.filter { $0.accountId == acctId && ManualTransactionService.isManual($0) }
         for t in parsed.transactions {
@@ -41,9 +42,12 @@ final class TransactionImportService {
                 context.delete(m)
             }
             context.insert(rec)
+            newlyInserted.append(rec)
             inserted += 1
         }
         try? context.save()
+        // Scheduled payments the bank has now reported no longer count as overdue.
+        ScheduleService.autoResolve(with: newlyInserted, in: context)
         return (inserted, skipped)
     }
 }
@@ -257,13 +261,10 @@ final class CalendarService {
         try clearSynced()
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
+        let end = calendar.date(byAdding: .month, value: months, to: today) ?? today
         var created = 0
-        for offset in 0..<months {
-            guard let monthDate = calendar.date(byAdding: .month, value: offset, to: today) else { continue }
-            let monthStart = calendar.dateInterval(of: .month, for: monthDate)?.start ?? monthDate
-            for bill in bills where bill.isActive {
-                guard let due = calendar.date(byAdding: .day, value: CashCalendar.clampedDay(bill.dueDay) - 1, to: monthStart),
-                      due >= today else { continue }
+        for bill in bills where bill.isActive {
+            for due in bill.rule.dates(from: today, to: end, calendar: calendar) {
                 let ev = EKEvent(eventStore: store)
                 let amount = currency.string(from: NSNumber(value: abs(bill.amount))) ?? String(format: "$%.2f", abs(bill.amount))
                 let route = bill.item(accountNames: accountNames).detail
@@ -396,5 +397,132 @@ struct TransactionFilters: Equatable {
         case .spending: if amount >= 0 || cat == Categorizer.transfer { return false }
         }
         return true
+    }
+}
+
+// MARK: - Bulk delete
+
+@MainActor
+enum TransactionDeletionService {
+    /// Delete transactions. Hand-entered ones also undo their effect on the account balance (imported ones
+    /// leave the bank's balance alone). Transfer links from surviving transactions are cleared.
+    /// Returns how many were deleted.
+    @discardableResult
+    static func delete(_ txs: [TransactionRecord], accounts: [Account], all: [TransactionRecord], in context: ModelContext) -> Int {
+        let ids = Set(txs.map(\.id))
+        for other in all where !ids.contains(other.id) {
+            if let peer = other.transferPeerId, ids.contains(peer) { other.transferPeerId = nil }
+        }
+        for t in txs {
+            if ManualTransactionService.isManual(t) { accounts.first { $0.accountId == t.accountId }?.balance -= t.amount }
+            context.delete(t)
+        }
+        try? context.save()
+        return txs.count
+    }
+}
+
+// MARK: - Backup & restore
+
+/// Everything in the data file as plain Codable values, so it can be saved to a file,
+/// kept elsewhere, and loaded back (here or on another Mac). Passwords are never included.
+struct BackupFile: Codable, Equatable {
+    struct AccountRow: Codable, Equatable { var id: UUID; var name: String; var typeRaw: String; var accountId: String; var bankName: String; var balance: Double }
+    struct TransactionRow: Codable, Equatable {
+        var id: UUID; var fitid: String; var accountId: String; var accountName: String; var date: Date
+        var name: String; var amount: Double; var typeRaw: String; var category: String; var memo: String; var transferPeerId: UUID?
+    }
+    struct EnvelopeRow: Codable, Equatable { var id: UUID; var category: String; var year: Int; var month: Int; var allocated: Double }
+    struct ScheduleRow: Codable, Equatable {
+        var id: UUID; var name: String; var amount: Double; var dueDay: Int; var category: String; var isActive: Bool
+        var lastPaid: Date?; var kindRaw: String; var fromAccountId: String?; var toAccountId: String?
+        var frequencyRaw: String; var secondDay: Int; var anchorDate: Date?; var occurrenceLogRaw: String
+        var accountId: String?; var trackedSince: Date?
+    }
+    struct ProfileRow: Codable, Equatable { var id: UUID; var bankName: String; var ofxHomeURL: String; var username: String; var accountId: String; var clientUID: String; var lastSync: Date? }
+    struct RuleRow: Codable, Equatable { var merchantKey: String; var category: String; var createdAt: Date; var updatedAt: Date }
+    struct CategoryRow: Codable, Equatable { var name: String; var createdAt: Date }
+
+    var format: Int = 1
+    var createdAt: Date
+    var accounts: [AccountRow]
+    var transactions: [TransactionRow]
+    var envelopes: [EnvelopeRow]
+    var schedules: [ScheduleRow]
+    var profiles: [ProfileRow]
+    var rules: [RuleRow]
+    var categories: [CategoryRow]
+
+    var summary: String {
+        "\(accounts.count) accounts, \(transactions.count) transactions, \(schedules.count) scheduled, \(envelopes.count) budget lines"
+    }
+}
+
+@MainActor
+enum BackupService {
+    static func snapshot(in context: ModelContext, now: Date = Date()) -> BackupFile {
+        func all<T: PersistentModel>(_: T.Type) -> [T] { (try? context.fetch(FetchDescriptor<T>())) ?? [] }
+        return BackupFile(
+            createdAt: now,
+            accounts: all(Account.self).map { .init(id: $0.id, name: $0.name, typeRaw: $0.typeRaw, accountId: $0.accountId, bankName: $0.bankName, balance: $0.balance) },
+            transactions: all(TransactionRecord.self).map { .init(id: $0.id, fitid: $0.fitid, accountId: $0.accountId, accountName: $0.accountName, date: $0.date, name: $0.name, amount: $0.amount, typeRaw: $0.typeRaw, category: $0.category, memo: $0.memo, transferPeerId: $0.transferPeerId) },
+            envelopes: all(Envelope.self).map { .init(id: $0.id, category: $0.category, year: $0.year, month: $0.month, allocated: $0.allocated) },
+            schedules: all(RecurringBill.self).map { .init(id: $0.id, name: $0.name, amount: $0.amount, dueDay: $0.dueDay, category: $0.category, isActive: $0.isActive, lastPaid: $0.lastPaid, kindRaw: $0.kindRaw, fromAccountId: $0.fromAccountId, toAccountId: $0.toAccountId, frequencyRaw: $0.frequencyRaw, secondDay: $0.secondDay, anchorDate: $0.anchorDate, occurrenceLogRaw: $0.occurrenceLogRaw, accountId: $0.accountId, trackedSince: $0.trackedSince) },
+            profiles: all(OFXProfile.self).map { .init(id: $0.id, bankName: $0.bankName, ofxHomeURL: $0.ofxHomeURL, username: $0.username, accountId: $0.accountId, clientUID: $0.clientUID, lastSync: $0.lastSync) },
+            rules: all(CategoryRule.self).map { .init(merchantKey: $0.merchantKey, category: $0.category, createdAt: $0.createdAt, updatedAt: $0.updatedAt) },
+            categories: all(CustomCategory.self).map { .init(name: $0.name, createdAt: $0.createdAt) })
+    }
+
+    static func encode(_ file: BackupFile) throws -> Data {
+        let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; e.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try e.encode(file)
+    }
+    static func decode(_ data: Data) throws -> BackupFile {
+        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+        return try d.decode(BackupFile.self, from: data)
+    }
+
+    /// Delete every record (this also removes it from iCloud and the phone).
+    static func wipe(in context: ModelContext) {
+        func clear<T: PersistentModel>(_: T.Type) { for x in (try? context.fetch(FetchDescriptor<T>())) ?? [] { context.delete(x) } }
+        clear(TransactionRecord.self); clear(Account.self); clear(Envelope.self); clear(RecurringBill.self)
+        clear(OFXProfile.self); clear(CategoryRule.self); clear(CustomCategory.self)
+        try? context.save()
+    }
+
+    /// Replace everything with the contents of `file`.
+    static func restore(_ file: BackupFile, in context: ModelContext) {
+        wipe(in: context)
+        for a in file.accounts { context.insert(Account(id: a.id, name: a.name, type: AccountType(rawValue: a.typeRaw) ?? .checking, accountId: a.accountId, bankName: a.bankName, balance: a.balance)) }
+        for t in file.transactions {
+            let r = TransactionRecord(id: t.id, fitid: t.fitid, accountId: t.accountId, accountName: t.accountName, date: t.date, name: t.name, amount: t.amount, type: TransactionType(rawValue: t.typeRaw) ?? .debit, category: t.category, memo: t.memo)
+            r.transferPeerId = t.transferPeerId; context.insert(r)
+        }
+        for e in file.envelopes { context.insert(Envelope(id: e.id, category: e.category, year: e.year, month: e.month, allocated: e.allocated)) }
+        for s in file.schedules {
+            let b = RecurringBill(id: s.id, name: s.name, amount: s.amount, dueDay: s.dueDay, category: s.category, isActive: s.isActive)
+            b.lastPaid = s.lastPaid; b.kindRaw = s.kindRaw; b.fromAccountId = s.fromAccountId; b.toAccountId = s.toAccountId
+            b.frequencyRaw = s.frequencyRaw; b.secondDay = s.secondDay; b.anchorDate = s.anchorDate
+            b.occurrenceLogRaw = s.occurrenceLogRaw; b.accountId = s.accountId; b.trackedSince = s.trackedSince
+            context.insert(b)
+        }
+        for p in file.profiles {
+            let o = OFXProfile(id: p.id, bankName: p.bankName, ofxHomeURL: p.ofxHomeURL, username: p.username, accountId: p.accountId)
+            o.clientUID = p.clientUID; o.lastSync = p.lastSync; context.insert(o)
+        }
+        for r in file.rules { context.insert(CategoryRule(merchantKey: r.merchantKey, category: r.category, now: r.createdAt)); }
+        for c in file.categories { context.insert(CustomCategory(name: c.name, createdAt: c.createdAt)) }
+        try? context.save()
+    }
+
+    /// Fresh, empty data file: wipes everything and re-seeds the standard category list.
+    static func startNew(in context: ModelContext) {
+        wipe(in: context)
+        CategoryService.seedIfNeeded(in: context, defaults: UserDefaults(suiteName: "finance.fresh.\(UUID().uuidString)") ?? .standard)
+    }
+
+    static func suggestedName(now: Date = Date()) -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HHmm"; f.locale = Locale(identifier: "en_US_POSIX")
+        return "Finance Backup \(f.string(from: now)).json"
     }
 }

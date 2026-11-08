@@ -18,6 +18,11 @@ struct TransactionsView: View {
     @State private var newCategoryFor: TransactionRecord?
     /// Transaction we're choosing a transfer partner for.
     @State private var linkingTx: TransactionRecord?
+    /// Rows picked for bulk actions (Select All is Cmd-A in the list, or the button below).
+    @State private var selection = Set<UUID>()
+    @State private var confirmingDelete = false
+    /// Transaction whose category list is open.
+    @State private var editingCategoryFor: UUID?
 
     var filtered: [TransactionRecord] {
         transactions.filter { t in
@@ -52,6 +57,13 @@ struct TransactionsView: View {
     }
 
     var body: some View {
+        // Work out the expensive things once per redraw (thousands of rows add up quickly).
+        let rows = filtered
+        let runningBalances = balances
+        let byId = Dictionary(transactions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let usedCats = usedCategories
+        let cats = Array(Set(assignableCategories)).sorted()
+        let net = rows.reduce(0) { $0 + $1.amount }
         VStack(spacing: 0) {
             HStack {
                 Picker("Account", selection: $filters.accountId) {
@@ -66,7 +78,7 @@ struct TransactionsView: View {
                 TextField("Search transactions", text: $search).textFieldStyle(.roundedBorder)
                 Picker("Category", selection: $filters.category) {
                     Text("All").tag("All")
-                    ForEach(Array(Set(usedCategories + [filters.category]).subtracting(["All"])).sorted(), id: \.self) { c in Text(c).tag(c) }
+                    ForEach(Array(Set(usedCats + [filters.category]).subtracting(["All"])).sorted(), id: \.self) { c in Text(c).tag(c) }
                 }
                 Button("Auto-categorize") {
                     let n = CategorizationService.categorizeUncategorized(in: context)
@@ -99,9 +111,7 @@ struct TransactionsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal).padding(.bottom, 6)
             }
-            let runningBalances = balances
-            let byId = Dictionary(uniqueKeysWithValues: transactions.map { ($0.id, $0) })
-            List(filtered) { tx in
+            List(rows, selection: $selection) { tx in
                 HStack {
                     Text(tx.date, format: .dateTime.month(.abbreviated).day().year())
                         .monospacedDigit()
@@ -111,19 +121,23 @@ struct TransactionsView: View {
                         Text(accountLine(tx, byId)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Picker("Category", selection: Binding(
-                        get: { tx.category },
-                        set: { choice in
-                            if choice == Self.newCategoryChoice { newCategoryFor = tx }
-                            else { setCategory(choice, on: tx) }
+                    // A plain button; the list of categories is only built when it's clicked
+                    // (a dropdown per row made big lists slow).
+                    Button { editingCategoryFor = tx.id } label: {
+                        HStack(spacing: 4) {
+                            Text(tx.category).lineLimit(1)
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundStyle(.secondary)
                         }
-                    )) {
-                        ForEach(Array(Set(assignableCategories + [tx.category])).sorted(), id: \.self) { c in Text(c).tag(c) }
-                        Divider()
-                        Text("New Category…").tag(Self.newCategoryChoice)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .frame(width: 150, alignment: .leading)
+                        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .labelsHidden()
-                    .frame(width: 150)
+                    .buttonStyle(.plain)
+                    .popover(isPresented: Binding(get: { editingCategoryFor == tx.id },
+                                                  set: { if !$0 { editingCategoryFor = nil } }), arrowEdge: .bottom) {
+                        categoryChoices(for: tx, cats: cats)
+                    }
                     Text(currency.string(from: NSNumber(value: tx.amount)) ?? "$0")
                         .foregroundStyle(tx.isExpense ? .red : .green)
                         .monospacedDigit()
@@ -143,6 +157,7 @@ struct TransactionsView: View {
                         let out = tx.amount < 0 ? tx : peer, into = tx.amount < 0 ? peer : tx
                         scheduleEditor = ScheduleEditor(existing: nil, draft: ScheduleService.draft(
                             fromName: tx.name, amount: tx.amount, date: tx.date, category: tx.category,
+                            accountId: tx.accountId,
                             transferFrom: peer == nil ? nil : out?.accountId,
                             transferTo: peer == nil ? nil : into?.accountId))
                     }
@@ -158,17 +173,31 @@ struct TransactionsView: View {
                     } else {
                         Button("Link to Matching Transaction…") { linkingTx = tx }
                     }
+                    Divider()
+                    Button(selection.contains(tx.id) && selection.count > 1 ? "Delete \(selection.count) Transactions…" : "Delete Transaction…", role: .destructive) {
+                        if !selection.contains(tx.id) { selection = [tx.id] }
+                        confirmingDelete = true
+                    }
                 }
             }
+            .onDeleteCommand { if !selection.isEmpty { confirmingDelete = true } }
         }
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 16) {
-                Text("\(filtered.count) transaction\(filtered.count == 1 ? "" : "s")")
+                Text("\(rows.count) transaction\(rows.count == 1 ? "" : "s")")
+                Button("Select All") { selection = Set(filtered.map(\.id)) }
+                    .disabled(rows.isEmpty)
+                    .help("Select every transaction shown (Cmd-A also works in the list)")
+                if !selection.isEmpty {
+                    Text("\(selection.count) selected").foregroundStyle(.secondary)
+                    Button("Clear") { selection = [] }
+                    Button("Delete…", role: .destructive) { confirmingDelete = true }
+                }
                 Spacer()
                 HStack(spacing: 4) {
                     Text("Net shown:").foregroundStyle(.secondary)
-                    Text(currency.string(from: NSNumber(value: shownNet)) ?? "")
-                        .foregroundStyle(shownNet < 0 ? Color.red : Color.green)
+                    Text(currency.string(from: NSNumber(value: net)) ?? "")
+                        .foregroundStyle(net < 0 ? Color.red : Color.green)
                 }
                 HStack(spacing: 4) {
                     Text("Balance:").foregroundStyle(.secondary)
@@ -188,12 +217,26 @@ struct TransactionsView: View {
                 }
             }
         }
+        .confirmationDialog("Delete \(selection.count) transaction\(selection.count == 1 ? "" : "s")?",
+                            isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                let chosen = transactions.filter { selection.contains($0.id) }
+                // Bank-synced rows only come back if the next sync starts from scratch.
+                if chosen.contains(where: { $0.fitid.hasPrefix(PlaidMapping.prefix) }) { PlaidStore.resetCursors() }
+                let n = TransactionDeletionService.delete(chosen, accounts: accounts, all: transactions, in: context)
+                selection = []
+                status = "Deleted \(n) transaction\(n == 1 ? "" : "s"). Bank-synced ones come back on the next Sync Now."
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They are removed from this Mac and, with iCloud sync, from your iPhone. This can't be undone, so use File ▸ Back Up Data first if you're unsure.")
+        }
         .sheet(item: $scheduleEditor) { ed in
             ScheduleEditorSheet(editor: ed, categories: BudgetService.allCategories(stored: customCategories.map(\.name)),
                                 accounts: accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }) { draft in
                 ScheduleEditor.save(draft, existing: nil, in: context)
                 scheduleEditor = nil
-                status = "Scheduled \(draft.name) for the \(draft.dueDay)\(ordinalSuffix(draft.dueDay)) of each month. See Scheduled Transactions."
+                status = "Scheduled \(draft.name): \(draft.rule.summary()). See Scheduled Transactions."
             } onCancel: { scheduleEditor = nil }
         }
         .sheet(item: $linkingTx) { tx in
@@ -209,6 +252,43 @@ struct TransactionsView: View {
                 setCategory(name, on: tx)
             } onCancel: { newCategoryFor = nil }
         }
+    }
+
+    private func categoryChoices(for tx: TransactionRecord, cats: [String]) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(cats.contains(tx.category) ? cats : (cats + [tx.category]).sorted(), id: \.self) { c in
+                    Button {
+                        editingCategoryFor = nil
+                        setCategory(c, on: tx)
+                    } label: {
+                        HStack {
+                            Text(c)
+                            Spacer()
+                            if c == tx.category { Image(systemName: "checkmark") }
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                Divider().padding(.vertical, 4)
+                Button {
+                    editingCategoryFor = nil
+                    // Let the popover finish closing before the next sheet opens.
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 350_000_000)
+                        newCategoryFor = tx
+                    }
+                } label: {
+                    Text("New Category…").padding(.horizontal, 10).padding(.vertical, 4).frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.vertical, 6)
+        }
+        .frame(width: 220, height: 320)
     }
 
     private func chip(_ title: String, clear: @escaping () -> Void) -> some View {

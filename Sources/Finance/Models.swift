@@ -99,6 +99,18 @@ final class RecurringBill {
     /// For transfers: OFX accountIds the money leaves and arrives in. Nil otherwise.
     var fromAccountId: String? = nil
     var toAccountId: String? = nil
+    /// "monthly" | "semimonthly" | "weekly" | "biweekly" (see ScheduleFrequency). Existing rows are monthly.
+    var frequencyRaw: String = "monthly"
+    /// Second day of the month for twice-a-month schedules.
+    var secondDay: Int = 15
+    /// A date a weekly / every-2-weeks schedule lands on; the repeat counts from it.
+    var anchorDate: Date? = nil
+    /// Occurrences already dealt with: "yyyy-MM-dd|e" (entered) or "|s" (skipped), comma separated.
+    var occurrenceLogRaw: String = ""
+    /// Account used last time this schedule was entered (default for next time).
+    var accountId: String? = nil
+    /// Payments dated before this day are never treated as overdue (set when the schedule is created).
+    var trackedSince: Date? = nil
 
     init(id: UUID = UUID(), name: String, amount: Double, dueDay: Int, category: String, isActive: Bool = true, isIncome: Bool = false) {
         self.id = id; self.name = name; self.amount = amount; self.dueDay = dueDay
@@ -175,9 +187,12 @@ struct ForecastEvent: Identifiable {
     let isTransfer: Bool
     let gross: Double
     let detail: String?     // e.g. "Checking → Visa"
+    /// The scheduled transaction (RecurringBill.id) this event comes from, when there is one.
+    let billId: UUID?
 
     init(date: Date, name: String, amount: Double, isIncome: Bool, category: String,
-         isTransfer: Bool = false, gross: Double? = nil, detail: String? = nil) {
+         isTransfer: Bool = false, gross: Double? = nil, detail: String? = nil, billId: UUID? = nil) {
+        self.billId = billId
         self.id = UUID(); self.date = date; self.name = name
         self.amount = amount; self.isIncome = isIncome; self.category = category
         self.isTransfer = isTransfer; self.gross = gross ?? abs(amount); self.detail = detail
@@ -225,6 +240,24 @@ struct ForecastOptions {
         self.inferIncomeFromHistory = inferIncomeFromHistory
         self.startingBalance = startingBalance; self.from = from
     }
+}
+
+// MARK: - Balances as of today
+
+/// An account's balance includes transactions you've booked ahead of time (dated after today).
+/// `BalanceBook` takes those out, so a bank's balance reads as it stands today.
+struct BalanceBook {
+    private let ahead: [String: Double]
+    init(transactions: [TransactionRecord], today: Date = Date(), calendar: Calendar = .current) {
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: today)) ?? today
+        var m: [String: Double] = [:]
+        for t in transactions where t.date >= tomorrow { m[t.accountId, default: 0] += t.amount }
+        ahead = m
+    }
+    /// Sum of the future-dated amounts booked in an account.
+    func booked(ahead id: String) -> Double { ahead[id] ?? 0 }
+    func today(_ a: Account) -> Double { a.balance - (ahead[a.accountId] ?? 0) }
+    func today(_ accounts: [Account]) -> Double { accounts.reduce(0) { $0 + today($1) } }
 }
 
 // MARK: - User-defined categories

@@ -17,7 +17,8 @@ struct DashboardView: View {
     private var rows: [SpendingReport.Row] { transactions.map { ($0.category, $0.amount, $0.date) } }
     private var totals: (income: Double, expenses: Double) { SpendingReport.totals(rows, period: period) }
     private var categorySpend: [CategorySpend] { SpendingReport.byCategory(rows, period: period) }
-    var netWorth: Double { accounts.reduce(0) { $0 + $1.balance } }
+    var book: BalanceBook { BalanceBook(transactions: transactions) }
+    var netWorth: Double { book.today(accounts) }
 
     var body: some View {
         ScrollView {
@@ -83,7 +84,7 @@ struct DashboardView: View {
                         HStack {
                             VStack(alignment: .leading) { Text(a.name).font(.headline); Text("\(a.bankName) •••\(a.accountId.suffix(4))").font(.caption).foregroundStyle(.secondary) }
                             Spacer()
-                            Text(currency.string(from: NSNumber(value: a.balance)) ?? "$0").font(.title3.monospacedDigit())
+                            Text(currency.string(from: NSNumber(value: book.today(a))) ?? "$0").font(.title3.monospacedDigit())
                         }
                         .padding(.vertical, 4)
                         .contentShape(Rectangle())
