@@ -113,6 +113,11 @@ struct TransactionsView: View {
             }
             List(rows, selection: $selection) { tx in
                 HStack {
+                    Image(systemName: tx.isReconciled ? "checkmark.circle.fill" : "circle.dashed")
+                        .foregroundStyle(tx.isReconciled ? Color.green : Color.secondary)
+                        .frame(width: 20)
+                        .help(tx.isReconciled ? "Reconciled: confirmed by a bank sync or file import"
+                                              : "Not reconciled yet: entered by hand, waiting for the bank to report it")
                     Text(tx.date, format: .dateTime.month(.abbreviated).day().year())
                         .monospacedDigit()
                         .frame(width: 100, alignment: .leading)
