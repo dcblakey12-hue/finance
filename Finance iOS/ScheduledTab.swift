@@ -134,14 +134,14 @@ struct ScheduleForm: View {
                 switch draft.frequency {
                 case .monthly:
                     Picker("Day of month", selection: $draft.dueDay) {
-                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                        ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
                     }
                 case .semimonthly:
                     Picker("First day", selection: $draft.dueDay) {
-                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                        ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
                     }
                     Picker("Second day", selection: $draft.secondDay) {
-                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                        ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
                     }
                 case .weekly, .biweekly:
                     DatePicker("A date it lands on", selection: startDateBinding, displayedComponents: .date)

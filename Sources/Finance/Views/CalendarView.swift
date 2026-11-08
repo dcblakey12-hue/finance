@@ -289,7 +289,7 @@ struct CalendarView: View {
     /// Double-click an empty day: open the Schedule Transaction window with that date filled in.
     private func newSchedule(on date: Date) {
         let day = calendar.component(.day, from: date)
-        let draft = ScheduleDraft(name: "", amount: 0, dueDay: min(day, 28), category: "Other", isIncome: false,
+        let draft = ScheduleDraft(name: "", amount: 0, dueDay: min(day, 31), category: "Other", isIncome: false,
                                   startDate: calendar.startOfDay(for: date))
         editor = ScheduleEditor(existing: nil, draft: draft)
     }
