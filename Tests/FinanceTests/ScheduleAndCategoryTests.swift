@@ -1119,3 +1119,28 @@ final class ForecastAccountsTests: XCTestCase {
         XCTAssertEqual(names(["visa"]), ["Netflix", "Pay Visa"])        // card only: the payment arrives
     }
 }
+
+final class DashboardMathTests: XCTestCase {
+    private var cal: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c }
+    private func d(_ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: m, day: day))! }
+
+    func testNetWorthHistoryUndoesLaterTransactions() {
+        // Today Nov 8: 1000 now. +500 on Nov 2, -200 on Oct 20.  End of Oct = 1000 - 500 = 500; end of Sep = 500 + 200 = 700.
+        let tx: [(date: Date, amount: Double)] = [(d(11, 2), 500), (d(10, 20), -200), (d(11, 20), 999)]   // last one is future: ignored
+        let pts = DashboardMath.netWorthHistory(currentTotal: 1000, transactions: tx, months: 2, today: d(11, 8), calendar: cal)
+        XCTAssertEqual(pts.map(\.balance), [700, 500, 1000])
+        XCTAssertEqual(pts.last?.date, d(11, 8))
+    }
+
+    func testProjectionStartsAtTodayAndHitsPayday() {
+        let pay = ScheduleItem(name: "Pay", amount: 2000, dueDay: 15, category: "Income")
+        let rent = ScheduleItem(name: "Rent", amount: -1200, dueDay: 12, category: "Housing")
+        let r = DashboardMath.projection(days: 10, schedules: [pay, rent], balanceToday: 500, cashAccountIds: [], today: d(11, 8), calendar: cal)
+        XCTAssertEqual(r.points.first?.date, d(11, 8))
+        XCTAssertEqual(r.points.first?.balance, 500)
+        XCTAssertEqual(r.points.last?.date, d(11, 18))
+        XCTAssertEqual(r.points.first { $0.date == d(11, 12) }?.balance, -700)
+        XCTAssertEqual(r.points.last?.balance, 1300)
+        XCTAssertEqual(r.upcoming.map(\.name), ["Rent", "Pay"])
+    }
+}
