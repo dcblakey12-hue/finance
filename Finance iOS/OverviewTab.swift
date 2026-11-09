@@ -164,12 +164,17 @@ struct OverviewTab: View {
                             } else {
                                 Text(money(spent)).font(.title3.bold().monospacedDigit())
                                 ForEach(spend.prefix(6), id: \.category) { c in
+                                    NavigationLink {
+                                        CategoryTransactionsList(category: c.category, transactions: transactions)
+                                    } label: {
                                     HStack {
                                         Text(c.category).lineLimit(1)
                                         Spacer()
                                         Text(short(c.amount)).monospacedDigit().foregroundStyle(.secondary)
                                         if spent > 0 { Text(String(format: "%.0f%%", c.amount / spent * 100)).font(.caption2).foregroundStyle(.secondary).frame(width: 34, alignment: .trailing) }
+                                        Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
                                     }.font(.callout)
+                                    }.buttonStyle(.plain)
                                 }
                             }
                         }
@@ -349,6 +354,41 @@ struct NetWorthDetail: View {
             }
         }
         .navigationTitle("Net Worth")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+
+/// The last-30-days expenses behind one category row on the Overview.
+struct CategoryTransactionsList: View {
+    let category: String
+    let transactions: [TransactionRecord]
+
+    private var rows: [TransactionRecord] {
+        transactions.filter {
+            $0.category == category && $0.amount < 0 && DashboardPeriod.last30Days.contains($0.date)
+        }.sorted { $0.date > $1.date }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(rows) { t in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(t.name).lineLimit(1)
+                            Text("\(t.date.formatted(.dateTime.month(.abbreviated).day())) • \(t.accountName)")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(currency.string(from: NSNumber(value: t.amount)) ?? "").monospacedDigit()
+                    }
+                }
+            } header: {
+                Text("\(rows.count) transactions • \(currency.string(from: NSNumber(value: -rows.reduce(0) { $0 + $1.amount })) ?? "")")
+            }
+        }
+        .navigationTitle(category)
         .navigationBarTitleDisplayMode(.inline)
     }
 }
