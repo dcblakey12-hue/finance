@@ -17,6 +17,9 @@ struct ForecastView: View {
     @State private var inferIncome = true
     @State private var selectedMonthID: Date?
     @State private var openEnvelopes = Set<Date>()
+    @State private var detail: EnvelopeDetail?
+
+    struct EnvelopeDetail: Identifiable { let id = UUID(); let line: EnvelopeLine; let month: ForecastMonth }
     @State private var startDate = Calendar.current.startOfDay(for: Date())
     /// Accounts included in the forecast (comma-separated OFX accountIds; empty = all accounts).
     @AppStorage("forecastAccountIds") private var accountIdsRaw = ""
@@ -80,6 +83,65 @@ struct ForecastView: View {
             }.padding()
         }
         .navigationTitle("Cash Flow Forecast")
+        .sheet(item: $detail) { d in envelopeSheet(d) }
+    }
+
+    private func envelopeSheet(_ d: EnvelopeDetail) -> some View {
+        let l = d.line, m = d.month
+        let isFallback = l.name.hasPrefix("No envelopes")
+        let bills = m.events.filter { !$0.isIncome && ($0.category == l.name || isFallback) }
+        let billTotal = bills.reduce(0) { $0 + abs($1.amount) }
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading) {
+                    Text(isFallback ? "Average spending" : l.name).font(.title3.bold())
+                    Text(m.monthDate.formatted(.dateTime.month(.wide).year())).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { detail = nil }.keyboardShortcut(.defaultAction)
+            }
+            GroupBox {
+                HStack {
+                    Text(isFallback ? "Average monthly spending (last 3 months)" : "Budget (envelope)")
+                    Spacer()
+                    Text(fmt(l.allocated)).font(.title3.monospacedDigit())
+                }.padding(4)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(isFallback ? "Scheduled bills this month" : "Bills in this category").font(.headline)
+                if bills.isEmpty {
+                    Text("No scheduled bills in this category this month.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    List(bills) { e in
+                        HStack {
+                            Text(e.date.formatted(.dateTime.month(.abbreviated).day())).foregroundStyle(.secondary)
+                                .frame(width: 56, alignment: .leading)
+                            Text(e.name)
+                            Spacer()
+                            Text(fmt(abs(e.amount))).monospacedDigit()
+                        }
+                    }.frame(minHeight: 80, maxHeight: 220)
+                }
+                HStack { Text("Bills total").bold(); Spacer(); Text(fmt(billTotal)).bold().monospacedDigit() }
+            }
+            Divider()
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Left for everyday spending").font(.headline)
+                    Text("\(fmt(l.allocated)) budget − \(fmt(l.billed)) bills" + (m.envelopeScale < 1 ? ", × \(Int((m.envelopeScale * 100).rounded()))% of the month left" : ""))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(fmt(l.remainder)).font(.title3.bold().monospacedDigit())
+            }
+            if !isFallback {
+                Button("Show \(l.name) transactions") {
+                    detail = nil
+                    onOpenTransactions(TransactionFilters(category: l.name, month: m.monthDate))
+                }
+            }
+        }
+        .padding(20).frame(width: 460)
     }
 
     // MARK: - Subviews
@@ -248,13 +310,13 @@ struct ForecastView: View {
                     Text(fmt(l.remainder)).frame(width: 80, alignment: .trailing)
                 }.font(.caption.monospacedDigit())
                 .contentShape(Rectangle())
-                .onTapGesture(count: 2) { onOpenTransactions(TransactionFilters(category: l.name, month: m.monthDate)) }
-                .help("Double-click to see \(l.name) transactions for this month")
+                .onTapGesture(count: 2) { detail = EnvelopeDetail(line: l, month: m) }
+                .help("Double-click to see the budget and the bills behind this row")
             }
             Divider()
             Text(m.envelopeScale < 1
                  ? "Forecast = budget minus bills already counted in that category, then scaled to the \(Int((m.envelopeScale * 100).rounded()))% of the month still ahead. Edit amounts on the Budget page."
-                 : "Forecast = budget minus bills already counted in that category, so scheduled bills aren't counted twice. Double-click a row to see that category's transactions for the month.")
+                 : "Forecast = budget minus bills already counted in that category, so scheduled bills aren't counted twice. Double-click a row to see the budget and the bills behind it.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(8).background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
