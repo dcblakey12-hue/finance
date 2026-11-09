@@ -87,7 +87,7 @@ struct OverviewTab: View {
                             NavigationLink {
                                 NetWorthDetail(accounts: accounts, book: book)
                             } label: {
-                                tile("Net worth", money(netWorth), "Assets \(short(assets)) • Debts \(short(debts)) ›")
+                                tile("Net worth", money(netWorth), "Assets \(short(assets))", caption2: "Debts \(short(debts)) ›")
                             }
                             .buttonStyle(.plain)
                             tile("Lowest in 30 days", low.map { money($0.balance) } ?? "—", low.map { "on \(day($0.date))" } ?? "",
@@ -207,11 +207,12 @@ struct OverviewTab: View {
 
     // MARK: - Pieces
 
-    private func tile(_ title: String, _ value: String, _ caption: String, tint: Color? = nil) -> some View {
+    private func tile(_ title: String, _ value: String, _ caption: String, caption2: String? = nil, tint: Color? = nil) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.caption).foregroundStyle(.secondary)
             Text(value).font(.title3.bold().monospacedDigit()).foregroundStyle(tint ?? .primary).minimumScaleFactor(0.7).lineLimit(1)
-            Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
+            if let caption2 { Text(caption2).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8) }
         }
         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
