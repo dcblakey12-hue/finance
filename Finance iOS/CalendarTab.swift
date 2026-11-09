@@ -14,7 +14,7 @@ struct CalendarTab: View {
     private var calendar: Calendar { .current }
     private var included: [Account] {
         let cash: Set<AccountType> = [.checking, .savings, .cash]
-        return accounts.filter { includeAll || cash.contains($0.type) }
+        return accounts.filter { !$0.type.isPropertyValue && (includeAll || cash.contains($0.type)) }
     }
     private var names: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
     private var startingBalance: Double { BalanceBook(transactions: transactions).today(included) }

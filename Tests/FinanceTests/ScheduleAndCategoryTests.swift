@@ -1184,3 +1184,13 @@ final class ScheduleEndTests: XCTestCase {
         XCTAssertNil(rule.nextDate(from: d(2027, 1, 16), calendar: cal))
     }
 }
+
+final class PropertyAccountTests: XCTestCase {
+    func testPropertyIsGroupedLastAndFlagged() {
+        XCTAssertTrue(AccountType.property.isPropertyValue)
+        XCTAssertFalse(AccountType.checking.isPropertyValue)
+        XCTAssertEqual(AccountType.displayOrder.last, .property)
+        let groups = AccountType.grouped([AccountType.property, .checking], by: { $0 })
+        XCTAssertEqual(groups.map(\.type), [.checking, .property])
+    }
+}

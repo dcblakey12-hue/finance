@@ -51,6 +51,7 @@ struct AccountsTab: View {
         case .mortgage: return "Mortgage"
         case .investment: return "Investments"
         case .cash: return "Cash"
+        case .property: return "Property"
         }
     }
 }

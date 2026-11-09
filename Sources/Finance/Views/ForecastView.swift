@@ -37,7 +37,7 @@ struct ForecastView: View {
 
     /// Balance at the start of `startDate`: today's total, wound back by everything posted since.
     var startingBalance: Double {
-        let now = includedAccounts.reduce(0) { $0 + $1.balance }
+        let now = includedAccounts.filter { !$0.type.isPropertyValue }.reduce(0) { $0 + $1.balance }
         let start = Calendar.current.startOfDay(for: startDate)
         guard start < Calendar.current.startOfDay(for: Date()) else { return now }
         return now - transactions.filter { $0.date >= start && (selectedIds?.contains($0.accountId) ?? true) }.reduce(0) { $0 + $1.amount }

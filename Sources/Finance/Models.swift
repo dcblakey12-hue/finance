@@ -6,7 +6,7 @@ let currency: NumberFormatter = {
     let f = NumberFormatter(); f.numberStyle = .currency; f.locale = .current; return f
 }()
 
-enum AccountType: String, Codable, CaseIterable { case checking, savings, creditCard, mortgage, investment, cash }
+enum AccountType: String, Codable, CaseIterable { case checking, savings, creditCard, mortgage, investment, cash, property }
 
 /// Accounts of one type, for sectioned lists.
 struct AccountGroup<Item> {
@@ -16,7 +16,11 @@ struct AccountGroup<Item> {
 
 extension AccountType {
     /// Order sections appear in: checking first, then savings, cards, mortgage, investments, cash.
-    static let displayOrder: [AccountType] = [.checking, .savings, .creditCard, .mortgage, .investment, .cash]
+    static let displayOrder: [AccountType] = [.checking, .savings, .creditCard, .mortgage, .investment, .cash, .property]
+
+    /// A home or other property whose value you update by hand. It counts in net worth, but it is
+    /// not cash: it is left out of cash balances, running balances and the cash flow forecast.
+    var isPropertyValue: Bool { self == .property }
 
     /// Group items by account type in `displayOrder`, skipping types with no accounts.
     /// Items keep their incoming order within each group.

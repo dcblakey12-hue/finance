@@ -33,7 +33,7 @@ struct TransactionsTab: View {
         effectiveAccount == nil ? transactions : transactions.filter { $0.accountId == effectiveAccount }
     }
     private var endingBalance: Double {
-        effectiveAccount == nil ? accounts.reduce(0) { $0 + $1.balance }
+        effectiveAccount == nil ? accounts.filter { !$0.type.isPropertyValue }.reduce(0) { $0 + $1.balance }
                                 : (accounts.first { $0.accountId == effectiveAccount }?.balance ?? 0)
     }
     private var runningBalances: [UUID: Double] {
