@@ -13,6 +13,16 @@ struct OverviewTab: View {
     @AppStorage("overview.accountIds") private var accountIdsRaw = ""
     @State private var pickedDay: Date?
     @StateObject private var cloud = CloudSyncMonitor()
+    /// Your card order, saved on this phone (comma separated OverviewCard names).
+    @AppStorage("overviewCardOrder") private var cardOrderRaw = ""
+    @State private var reorderingCards = false
+    private var cardOrder: [OverviewCard] {
+        let saved = cardOrderRaw.split(separator: ",").compactMap { OverviewCard(rawValue: String($0)) }
+        var seen = Set<OverviewCard>(), out: [OverviewCard] = []
+        for c in saved where !seen.contains(c) { seen.insert(c); out.append(c) }
+        for c in OverviewCard.allCases where !seen.contains(c) { out.append(c) }
+        return out
+    }
     /// Opens the tab-order sheet (provided by the root view).
     var onReorderTabs: () -> Void = {}
 
@@ -68,104 +78,112 @@ struct OverviewTab: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                        tile("Cash today", money(cashToday), cashAccounts.isEmpty ? "No checking or savings" : "\(cashAccounts.count) account\(cashAccounts.count == 1 ? "" : "s")",
-                             tint: cashToday < 0 ? .red : nil)
-                        tile("Net worth", money(netWorth), "Assets \(short(assets)) • Debts \(short(debts))")
-                        tile("Lowest in 30 days", low.map { money($0.balance) } ?? "—", low.map { "on \(day($0.date))" } ?? "",
-                             tint: (low?.balance ?? 0) < 0 ? .red : nil)
-                        tile("Next payday", nextPay.map { money($0.amount) } ?? "—", nextPay.map { "\($0.name) • \(day($0.date))" } ?? "None in 30 days")
-                    }
-
-                    card("Cash — next 30 days") {
-                        if proj.points.isEmpty {
-                            Text("Add accounts and scheduled items to see a projection.").font(.caption).foregroundStyle(.secondary)
-                        } else {
-                            Chart {
-                                ForEach(proj.points) { p in
-                                    AreaMark(x: .value("Day", p.date, unit: .day), y: .value("Balance", p.balance)).foregroundStyle(.blue.opacity(0.15))
-                                    LineMark(x: .value("Day", p.date, unit: .day), y: .value("Balance", p.balance))
-                                        .interpolationMethod(.stepEnd).foregroundStyle(.blue)
-                                }
-                                RuleMark(y: .value("Zero", 0)).foregroundStyle(.red.opacity(0.5)).lineStyle(StrokeStyle(lineWidth: 1, dash: [4]))
-                                if let picked {
-                                    RuleMark(x: .value("Day", picked.date, unit: .day)).foregroundStyle(.secondary.opacity(0.5))
-                                    PointMark(x: .value("Day", picked.date, unit: .day), y: .value("Balance", picked.balance)).symbolSize(90)
-                                }
-                            }
-                            .chartYAxis { AxisMarks { v in AxisGridLine(); AxisValueLabel { if let d = v.as(Double.self) { Text(short(d)) } } } }
-                            .chartOverlay { proxy in
-                                GeometryReader { geo in
-                                    Rectangle().fill(.clear).contentShape(Rectangle())
-                                        .onTapGesture { location in
-                                            guard let frame = proxy.plotFrame else { return }
-                                            let x = location.x - geo[frame].origin.x
-                                            if let d: Date = proxy.value(atX: x) {
-                                                let day = Calendar.current.startOfDay(for: d)
-                                                pickedDay = (pickedDay == day) ? nil : day
-                                            }
-                                        }
-                                }
-                            }
-                            .frame(height: 170)
-                            if let picked {
-                                dayDetail(picked, days: proj.days, points: proj.points, startBalance: cashToday)
+                    ForEach(cardOrder) { c in
+                        switch c {
+                        case .tiles:
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                            tile("Cash today", money(cashToday), cashAccounts.isEmpty ? "No checking or savings" : "\(cashAccounts.count) account\(cashAccounts.count == 1 ? "" : "s")",
+                                 tint: cashToday < 0 ? .red : nil)
+                            tile("Net worth", money(netWorth), "Assets \(short(assets)) • Debts \(short(debts))")
+                            tile("Lowest in 30 days", low.map { money($0.balance) } ?? "—", low.map { "on \(day($0.date))" } ?? "",
+                                 tint: (low?.balance ?? 0) < 0 ? .red : nil)
+                            tile("Next payday", nextPay.map { money($0.amount) } ?? "—", nextPay.map { "\($0.name) • \(day($0.date))" } ?? "None in 30 days")
+                        }
+                        case .cash:
+                        card("Cash — next 30 days") {
+                            if proj.points.isEmpty {
+                                Text("Add accounts and scheduled items to see a projection.").font(.caption).foregroundStyle(.secondary)
                             } else {
-                                Text("Tap the line to see a day's balance and what moves it.").font(.caption2).foregroundStyle(.secondary)
+                                Chart {
+                                    ForEach(proj.points) { p in
+                                        AreaMark(x: .value("Day", p.date, unit: .day), y: .value("Balance", p.balance)).foregroundStyle(.blue.opacity(0.15))
+                                        LineMark(x: .value("Day", p.date, unit: .day), y: .value("Balance", p.balance))
+                                            .interpolationMethod(.stepEnd).foregroundStyle(.blue)
+                                    }
+                                    RuleMark(y: .value("Zero", 0)).foregroundStyle(.red.opacity(0.5)).lineStyle(StrokeStyle(lineWidth: 1, dash: [4]))
+                                    if let picked {
+                                        RuleMark(x: .value("Day", picked.date, unit: .day)).foregroundStyle(.secondary.opacity(0.5))
+                                        PointMark(x: .value("Day", picked.date, unit: .day), y: .value("Balance", picked.balance)).symbolSize(90)
+                                    }
+                                }
+                                .chartYAxis { AxisMarks { v in AxisGridLine(); AxisValueLabel { if let d = v.as(Double.self) { Text(short(d)) } } } }
+                                .chartOverlay { proxy in
+                                    GeometryReader { geo in
+                                        Rectangle().fill(.clear).contentShape(Rectangle())
+                                            .onTapGesture { location in
+                                                guard let frame = proxy.plotFrame else { return }
+                                                let x = location.x - geo[frame].origin.x
+                                                if let d: Date = proxy.value(atX: x) {
+                                                    let day = Calendar.current.startOfDay(for: d)
+                                                    pickedDay = (pickedDay == day) ? nil : day
+                                                }
+                                            }
+                                    }
+                                }
+                                .frame(height: 170)
+                                if let picked {
+                                    dayDetail(picked, days: proj.days, points: proj.points, startBalance: cashToday)
+                                } else {
+                                    Text("Tap the line to see a day's balance and what moves it.").font(.caption2).foregroundStyle(.secondary)
+                                }
                             }
                         }
-                    }
-
-                    card("Coming up") {
-                        let list = Array(proj.upcoming.prefix(8))
-                        if list.isEmpty { Text("Nothing scheduled in the next 30 days.").font(.caption).foregroundStyle(.secondary) }
-                        ForEach(list) { e in
-                            HStack {
-                                Text(day(e.date)).font(.caption).foregroundStyle(.secondary).frame(width: 48, alignment: .leading)
-                                Text(e.name).lineLimit(1)
-                                Spacer()
-                                Text(money(e.isTransfer ? e.gross : e.amount)).monospacedDigit()
-                                    .foregroundStyle(e.isTransfer ? .blue : (e.amount > 0 ? .green : .primary))
-                            }.font(.callout)
-                        }
-                    }
-
-                    card("Net worth — last 12 months") {
-                        Chart(history) { p in
-                            LineMark(x: .value("Date", p.date), y: .value("Net worth", p.balance)).foregroundStyle(.green)
-                            PointMark(x: .value("Date", p.date), y: .value("Net worth", p.balance)).foregroundStyle(.green)
-                        }
-                        .chartYScale(domain: .automatic(includesZero: false))
-                        .chartYAxis { AxisMarks { v in AxisGridLine(); AxisValueLabel { if let d = v.as(Double.self) { Text(short(d)) } } } }
-                        .frame(height: 140)
-                    }
-
-                    card("Spent in the last 30 days") {
-                        if spend.isEmpty {
-                            Text("No spending in this period.").font(.caption).foregroundStyle(.secondary)
-                        } else {
-                            Text(money(spent)).font(.title3.bold().monospacedDigit())
-                            ForEach(spend.prefix(6), id: \.category) { c in
+                        case .coming:
+                        card("Coming up") {
+                            let list = Array(proj.upcoming.prefix(8))
+                            if list.isEmpty { Text("Nothing scheduled in the next 30 days.").font(.caption).foregroundStyle(.secondary) }
+                            ForEach(list) { e in
                                 HStack {
-                                    Text(c.category).lineLimit(1)
+                                    Text(day(e.date)).font(.caption).foregroundStyle(.secondary).frame(width: 48, alignment: .leading)
+                                    Text(e.name).lineLimit(1)
                                     Spacer()
-                                    Text(short(c.amount)).monospacedDigit().foregroundStyle(.secondary)
-                                    if spent > 0 { Text(String(format: "%.0f%%", c.amount / spent * 100)).font(.caption2).foregroundStyle(.secondary).frame(width: 34, alignment: .trailing) }
+                                    Text(money(e.isTransfer ? e.gross : e.amount)).monospacedDigit()
+                                        .foregroundStyle(e.isTransfer ? .blue : (e.amount > 0 ? .green : .primary))
                                 }.font(.callout)
                             }
                         }
-                    }
-
-                    card("iCloud sync") {
-                        Label(cloud.summary, systemImage: cloud.hasProblem ? "exclamationmark.icloud" : (cloud.working ? "icloud.and.arrow.down" : "icloud"))
-                            .font(.caption).foregroundStyle(cloud.hasProblem ? Color.orange : Color.secondary)
-                        Text("Both devices must use the same Apple ID with iCloud on. Open the Mac app after a Plaid sync, and give the phone a moment with the app open.")
-                            .font(.caption2).foregroundStyle(.secondary)
+                        case .netWorth:
+                        card("Net worth — last 12 months") {
+                            Chart(history) { p in
+                                LineMark(x: .value("Date", p.date), y: .value("Net worth", p.balance)).foregroundStyle(.green)
+                                PointMark(x: .value("Date", p.date), y: .value("Net worth", p.balance)).foregroundStyle(.green)
+                            }
+                            .chartYScale(domain: .automatic(includesZero: false))
+                            .chartYAxis { AxisMarks { v in AxisGridLine(); AxisValueLabel { if let d = v.as(Double.self) { Text(short(d)) } } } }
+                            .frame(height: 140)
+                        }
+                        case .spending:
+                        card("Spent in the last 30 days") {
+                            if spend.isEmpty {
+                                Text("No spending in this period.").font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text(money(spent)).font(.title3.bold().monospacedDigit())
+                                ForEach(spend.prefix(6), id: \.category) { c in
+                                    HStack {
+                                        Text(c.category).lineLimit(1)
+                                        Spacer()
+                                        Text(short(c.amount)).monospacedDigit().foregroundStyle(.secondary)
+                                        if spent > 0 { Text(String(format: "%.0f%%", c.amount / spent * 100)).font(.caption2).foregroundStyle(.secondary).frame(width: 34, alignment: .trailing) }
+                                    }.font(.callout)
+                                }
+                            }
+                        }
+                        case .cloud:
+                        card("iCloud sync") {
+                            Label(cloud.summary, systemImage: cloud.hasProblem ? "exclamationmark.icloud" : (cloud.working ? "icloud.and.arrow.down" : "icloud"))
+                                .font(.caption).foregroundStyle(cloud.hasProblem ? Color.orange : Color.secondary)
+                            Text("Both devices must use the same Apple ID with iCloud on. Open the Mac app after a Plaid sync, and give the phone a moment with the app open.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        }
                     }
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
             }
             .navigationTitle("Overview")
+            .sheet(isPresented: $reorderingCards) {
+                CardOrderSheet(order: cardOrder) { cardOrderRaw = $0.map(\.rawValue).joined(separator: ",") }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -173,6 +191,7 @@ struct OverviewTab: View {
                         Divider()
                         Button("All accounts") { accountIdsRaw = "" }
                         Divider()
+                        Button("Reorder Cards…") { reorderingCards = true }
                         Button("Reorder Tabs…", action: onReorderTabs)
                     } label: { Image(systemName: "ellipsis.circle") }
                     .disabled(allAccounts.isEmpty)
@@ -228,5 +247,41 @@ struct OverviewTab: View {
             }.font(.callout)
         }
         Button("Clear") { pickedDay = nil }.font(.caption)
+    }
+}
+
+enum OverviewCard: String, CaseIterable, Identifiable {
+    case tiles, cash, coming, netWorth, spending, cloud
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .tiles: return "Balance tiles"
+        case .cash: return "Cash — next 30 days"
+        case .coming: return "Coming up"
+        case .netWorth: return "Net worth"
+        case .spending: return "Spent in the last 30 days"
+        case .cloud: return "iCloud sync"
+        }
+    }
+}
+
+/// Drag the handles to put the overview cards in the order you want.
+struct CardOrderSheet: View {
+    @State var order: [OverviewCard]
+    let onSave: ([OverviewCard]) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(order) { Text($0.title) }
+                    .onMove { order.move(fromOffsets: $0, toOffset: $1); onSave(order) }
+            }
+            .environment(\.editMode, .constant(.active))
+            .navigationTitle("Card Order")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        .presentationDetents([.medium])
     }
 }
