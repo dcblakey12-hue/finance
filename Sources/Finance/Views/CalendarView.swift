@@ -27,7 +27,7 @@ struct CalendarView: View {
     /// Cash on hand: checking, savings and cash accounts (or every account if toggled).
     private var includedAccounts: [Account] {
         let cash: Set<AccountType> = [.checking, .savings, .cash]
-        return accounts.filter { includeAllAccounts || cash.contains($0.type) }
+        return accounts.filter { !$0.type.isPropertyValue && (includeAllAccounts || cash.contains($0.type)) }
     }
     private var book: BalanceBook { BalanceBook(transactions: transactions) }
     private var startingBalance: Double { book.today(includedAccounts) }

@@ -38,7 +38,7 @@ struct TransactionsView: View {
     /// Current balance the newest transaction should end at: the selected
     /// account's balance, or all accounts combined.
     private var endingBalance: Double {
-        filters.accountId == nil ? accounts.reduce(0) { $0 + $1.balance }
+        filters.accountId == nil ? accounts.filter { !$0.type.isPropertyValue }.reduce(0) { $0 + $1.balance }
                              : (accounts.first { $0.accountId == filters.accountId }?.balance ?? 0)
     }
     private var balances: [UUID: Double] {

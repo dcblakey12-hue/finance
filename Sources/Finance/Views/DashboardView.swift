@@ -72,7 +72,7 @@ struct DashboardView: View {
         let forecast = CashFlowForecastService.forecast(
             bills: bills, envelopes: envelopes, transactions: transactions,
             options: ForecastOptions(months: 6, includeEnvelopes: true, fallbackAverageVariable: true, inferIncomeFromHistory: true,
-                                     startingBalance: accounts.reduce(0) { $0 + $1.balance }),
+                                     startingBalance: accounts.filter { !$0.type.isPropertyValue }.reduce(0) { $0 + $1.balance }),
             accountIds: sel)
         let rows: [SpendingReport.Row] = transactions.map { ($0.category, $0.amount, $0.date) }
         let totals = SpendingReport.totals(rows, period: period)
