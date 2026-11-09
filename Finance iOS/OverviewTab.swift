@@ -1,0 +1,220 @@
+import SwiftUI
+import SwiftData
+import Charts
+
+/// The phone's overview: where you stand today, what the next 30 days look like (tap the chart for a
+/// day's balance and what moves it), net worth over time, and where the last 30 days went.
+struct OverviewTab: View {
+    @Query(sort: \Account.name) private var allAccounts: [Account]
+    @Query(sort: \TransactionRecord.date, order: .reverse) private var allTransactions: [TransactionRecord]
+    @Query private var bills: [RecurringBill]
+
+    /// Accounts the overview covers (comma-separated accountIds; empty = all).
+    @AppStorage("overview.accountIds") private var accountIdsRaw = ""
+    @State private var pickedDay: Date?
+
+    private static let cashTypes: Set<AccountType> = [.checking, .savings, .cash]
+
+    private var selectedIds: Set<String>? {
+        let ids = Set(accountIdsRaw.split(separator: ",").map(String.init)).intersection(allAccounts.map(\.accountId))
+        return ids.isEmpty || ids.count == allAccounts.count ? nil : ids
+    }
+    private func isIncluded(_ a: Account) -> Binding<Bool> {
+        Binding(get: { selectedIds?.contains(a.accountId) ?? true },
+                set: { on in
+                    var ids = selectedIds ?? Set(allAccounts.map(\.accountId))
+                    if on { ids.insert(a.accountId) } else if ids.count > 1 { ids.remove(a.accountId) }
+                    accountIdsRaw = ids.count == allAccounts.count ? "" : ids.sorted().joined(separator: ",")
+                })
+    }
+
+    private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
+    private func short(_ v: Double) -> String {
+        let f = NumberFormatter(); f.numberStyle = .currency; f.maximumFractionDigits = 0; f.locale = .current
+        return f.string(from: NSNumber(value: v)) ?? ""
+    }
+    private func day(_ d: Date) -> String { d.formatted(.dateTime.month(.abbreviated).day()) }
+
+    var body: some View {
+        let sel = selectedIds
+        let accounts = allAccounts.filter { sel?.contains($0.accountId) ?? true }
+        let transactions = sel == nil ? allTransactions : allTransactions.filter { sel!.contains($0.accountId) }
+        let book = BalanceBook(transactions: transactions)
+        let cashAccounts = accounts.filter { Self.cashTypes.contains($0.type) }
+        let cashToday = book.today(cashAccounts)
+        let netWorth = book.today(accounts)
+        let debts = book.today(accounts.filter { $0.type == .creditCard || $0.type == .mortgage })
+        let assets = netWorth - debts
+        let names = Dictionary(allAccounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a })
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date())) ?? Date()
+        let ledger = transactions.filter { $0.date >= tomorrow }.map {
+            LedgerEntry(date: $0.date, name: $0.name, amount: $0.amount, accountId: $0.accountId, category: $0.category,
+                        isTransfer: $0.transferPeerId != nil || $0.category == Categorizer.transfer)
+        }
+        let proj = DashboardMath.projection(days: 30, schedules: bills.filter(\.isActive).map { $0.item(accountNames: names) },
+                                            balanceToday: cashToday, cashAccountIds: Set(cashAccounts.map(\.accountId)), ledger: ledger)
+        let low = proj.points.min { $0.balance < $1.balance }
+        let nextPay = proj.upcoming.first { $0.isIncome }
+        let history = DashboardMath.netWorthHistory(currentTotal: netWorth,
+                                                    transactions: transactions.map { (date: $0.date, amount: $0.amount) }, months: 12)
+        let rows: [SpendingReport.Row] = transactions.map { ($0.category, $0.amount, $0.date) }
+        let spend = SpendingReport.byCategory(rows, period: .last30Days)
+        let spent = SpendingReport.totals(rows, period: .last30Days).expenses
+        let picked = pickedDay.flatMap { d in proj.points.first { Calendar.current.isDate($0.date, inSameDayAs: d) } }
+
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                        tile("Cash today", money(cashToday), cashAccounts.isEmpty ? "No checking or savings" : "\(cashAccounts.count) account\(cashAccounts.count == 1 ? "" : "s")",
+                             tint: cashToday < 0 ? .red : nil)
+                        tile("Net worth", money(netWorth), "Assets \(short(assets)) • Debts \(short(debts))")
+                        tile("Lowest in 30 days", low.map { money($0.balance) } ?? "—", low.map { "on \(day($0.date))" } ?? "",
+                             tint: (low?.balance ?? 0) < 0 ? .red : nil)
+                        tile("Next payday", nextPay.map { money($0.amount) } ?? "—", nextPay.map { "\($0.name) • \(day($0.date))" } ?? "None in 30 days")
+                    }
+
+                    card("Cash — next 30 days") {
+                        if proj.points.isEmpty {
+                            Text("Add accounts and scheduled items to see a projection.").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Chart {
+                                ForEach(proj.points) { p in
+                                    AreaMark(x: .value("Day", p.date, unit: .day), y: .value("Balance", p.balance)).foregroundStyle(.blue.opacity(0.15))
+                                    LineMark(x: .value("Day", p.date, unit: .day), y: .value("Balance", p.balance))
+                                        .interpolationMethod(.stepEnd).foregroundStyle(.blue)
+                                }
+                                RuleMark(y: .value("Zero", 0)).foregroundStyle(.red.opacity(0.5)).lineStyle(StrokeStyle(lineWidth: 1, dash: [4]))
+                                if let picked {
+                                    RuleMark(x: .value("Day", picked.date, unit: .day)).foregroundStyle(.secondary.opacity(0.5))
+                                    PointMark(x: .value("Day", picked.date, unit: .day), y: .value("Balance", picked.balance)).symbolSize(90)
+                                }
+                            }
+                            .chartYAxis { AxisMarks { v in AxisGridLine(); AxisValueLabel { if let d = v.as(Double.self) { Text(short(d)) } } } }
+                            .chartOverlay { proxy in
+                                GeometryReader { geo in
+                                    Rectangle().fill(.clear).contentShape(Rectangle())
+                                        .onTapGesture { location in
+                                            guard let frame = proxy.plotFrame else { return }
+                                            let x = location.x - geo[frame].origin.x
+                                            if let d: Date = proxy.value(atX: x) {
+                                                let day = Calendar.current.startOfDay(for: d)
+                                                pickedDay = (pickedDay == day) ? nil : day
+                                            }
+                                        }
+                                }
+                            }
+                            .frame(height: 170)
+                            if let picked {
+                                dayDetail(picked, days: proj.days, points: proj.points, startBalance: cashToday)
+                            } else {
+                                Text("Tap the line to see a day's balance and what moves it.").font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    card("Coming up") {
+                        let list = Array(proj.upcoming.prefix(8))
+                        if list.isEmpty { Text("Nothing scheduled in the next 30 days.").font(.caption).foregroundStyle(.secondary) }
+                        ForEach(list) { e in
+                            HStack {
+                                Text(day(e.date)).font(.caption).foregroundStyle(.secondary).frame(width: 48, alignment: .leading)
+                                Text(e.name).lineLimit(1)
+                                Spacer()
+                                Text(money(e.isTransfer ? e.gross : e.amount)).monospacedDigit()
+                                    .foregroundStyle(e.isTransfer ? .blue : (e.amount > 0 ? .green : .primary))
+                            }.font(.callout)
+                        }
+                    }
+
+                    card("Net worth — last 12 months") {
+                        Chart(history) { p in
+                            LineMark(x: .value("Date", p.date), y: .value("Net worth", p.balance)).foregroundStyle(.green)
+                            PointMark(x: .value("Date", p.date), y: .value("Net worth", p.balance)).foregroundStyle(.green)
+                        }
+                        .chartYScale(domain: .automatic(includesZero: false))
+                        .chartYAxis { AxisMarks { v in AxisGridLine(); AxisValueLabel { if let d = v.as(Double.self) { Text(short(d)) } } } }
+                        .frame(height: 140)
+                    }
+
+                    card("Spent in the last 30 days") {
+                        if spend.isEmpty {
+                            Text("No spending in this period.").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text(money(spent)).font(.title3.bold().monospacedDigit())
+                            ForEach(spend.prefix(6), id: \.category) { c in
+                                HStack {
+                                    Text(c.category).lineLimit(1)
+                                    Spacer()
+                                    Text(short(c.amount)).monospacedDigit().foregroundStyle(.secondary)
+                                    if spent > 0 { Text(String(format: "%.0f%%", c.amount / spent * 100)).font(.caption2).foregroundStyle(.secondary).frame(width: 34, alignment: .trailing) }
+                                }.font(.callout)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
+            .navigationTitle("Overview")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        ForEach(allAccounts) { a in Toggle(a.name, isOn: isIncluded(a)) }
+                        Divider()
+                        Button("All accounts") { accountIdsRaw = "" }
+                    } label: { Image(systemName: "checklist") }
+                    .disabled(allAccounts.isEmpty)
+                }
+            }
+        }
+    }
+
+    // MARK: - Pieces
+
+    private func tile(_ title: String, _ value: String, _ caption: String, tint: Color? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.title3.bold().monospacedDigit()).foregroundStyle(tint ?? .primary).minimumScaleFactor(0.7).lineLimit(1)
+            Text(caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func card<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline)
+            content()
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    @ViewBuilder
+    private func dayDetail(_ sel: CashPoint, days: [CalendarDay], points: [CashPoint], startBalance: Double) -> some View {
+        let idx = points.firstIndex { $0.id == sel.id } ?? 0
+        let opening = idx > 0 ? points[idx - 1].balance : startBalance
+        let events = (days.first { Calendar.current.isDate($0.date, inSameDayAs: sel.date) }?.events ?? [])
+            .filter { $0.amount != 0 || $0.isTransfer }
+        Divider()
+        HStack {
+            Text(sel.date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())).font(.subheadline.bold())
+            Spacer()
+            Text(money(sel.balance)).bold().monospacedDigit().foregroundStyle(sel.balance < 0 ? .red : .primary)
+        }
+        Text(idx == 0 ? "Starting from \(money(opening)) today" : "Previous day \(money(opening))")
+            .font(.caption2).foregroundStyle(.secondary)
+        if events.isEmpty { Text("Nothing moves the balance on this day.").font(.caption).foregroundStyle(.secondary) }
+        ForEach(events) { e in
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(e.name).lineLimit(1)
+                    if let d = e.detail { Text(d).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
+                }
+                Spacer()
+                Text(money(e.amount)).monospacedDigit().foregroundStyle(e.amount > 0 ? .green : .primary)
+            }.font(.callout)
+        }
+        Button("Clear") { pickedDay = nil }.font(.caption)
+    }
+}
