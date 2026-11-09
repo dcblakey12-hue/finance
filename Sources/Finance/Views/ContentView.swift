@@ -58,7 +58,7 @@ struct ContentView: View {
                 case .budget: BudgetView(onOpenTransactions: { openTransactions($0) })
                 case .scheduled: ScheduledView()
                 case .calendar: CalendarView()
-                case .forecast: ForecastView()
+                case .forecast: ForecastView(onOpenTransactions: { openTransactions($0) })
                 case .importData: ImportView()
                 case .settings: SettingsView()
                 }

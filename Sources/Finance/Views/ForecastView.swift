@@ -3,6 +3,9 @@ import SwiftData
 import Charts
 
 struct ForecastView: View {
+    /// Double-click an envelope row to see that category's transactions for the month.
+    var onOpenTransactions: (TransactionFilters) -> Void = { _ in }
+
     @Query var accounts: [Account]
     @Query var bills: [RecurringBill]
     @Query var envelopes: [Envelope]
@@ -244,11 +247,14 @@ struct ForecastView: View {
                     Text(l.billed > 0 ? fmt(l.billed) : "—").frame(width: 80, alignment: .trailing).foregroundStyle(.secondary)
                     Text(fmt(l.remainder)).frame(width: 80, alignment: .trailing)
                 }.font(.caption.monospacedDigit())
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { onOpenTransactions(TransactionFilters(category: l.name, month: m.monthDate)) }
+                .help("Double-click to see \(l.name) transactions for this month")
             }
             Divider()
             Text(m.envelopeScale < 1
                  ? "Forecast = budget minus bills already counted in that category, then scaled to the \(Int((m.envelopeScale * 100).rounded()))% of the month still ahead. Edit amounts on the Budget page."
-                 : "Forecast = budget minus bills already counted in that category, so scheduled bills aren't counted twice. Edit amounts on the Budget page.")
+                 : "Forecast = budget minus bills already counted in that category, so scheduled bills aren't counted twice. Double-click a row to see that category's transactions for the month.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(8).background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
