@@ -363,6 +363,8 @@ struct NetWorthDetail: View {
 struct CategoryTransactionsList: View {
     let category: String
     let transactions: [TransactionRecord]
+    @Query private var customCategories: [CustomCategory]
+    @Environment(\.modelContext) private var context
 
     private var rows: [TransactionRecord] {
         transactions.filter {
@@ -382,6 +384,19 @@ struct CategoryTransactionsList: View {
                         }
                         Spacer()
                         Text(currency.string(from: NSNumber(value: t.amount)) ?? "").monospacedDigit()
+                        Menu {
+                            ForEach(allCategoryChoices(customCategories), id: \.self) { c in
+                                Button(c) {
+                                    guard c != t.category else { return }
+                                    if t.transferPeerId != nil && c != Categorizer.transfer {
+                                        TransferLinkService.detach(t, among: transactions)
+                                    }
+                                    CategorizationService.learn(from: t, category: c, in: context)
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "tag").padding(6).background(.quaternary, in: Capsule())
+                        }
                     }
                 }
             } header: {
