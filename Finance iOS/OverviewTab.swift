@@ -13,6 +13,8 @@ struct OverviewTab: View {
     @AppStorage("overview.accountIds") private var accountIdsRaw = ""
     @State private var pickedDay: Date?
     @StateObject private var cloud = CloudSyncMonitor()
+    /// Opens the tab-order sheet (provided by the root view).
+    var onReorderTabs: () -> Void = {}
 
     private static let cashTypes: Set<AccountType> = [.checking, .savings, .cash]
 
@@ -138,13 +140,6 @@ struct OverviewTab: View {
                         .frame(height: 140)
                     }
 
-                    card("iCloud sync") {
-                        Label(cloud.summary, systemImage: cloud.hasProblem ? "exclamationmark.icloud" : (cloud.working ? "icloud.and.arrow.down" : "icloud"))
-                            .font(.caption).foregroundStyle(cloud.hasProblem ? Color.orange : Color.secondary)
-                        Text("Both devices must use the same Apple ID with iCloud on. Open the Mac app after a Plaid sync, and give the phone a moment with the app open.")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-
                     card("Spent in the last 30 days") {
                         if spend.isEmpty {
                             Text("No spending in this period.").font(.caption).foregroundStyle(.secondary)
@@ -160,6 +155,13 @@ struct OverviewTab: View {
                             }
                         }
                     }
+
+                    card("iCloud sync") {
+                        Label(cloud.summary, systemImage: cloud.hasProblem ? "exclamationmark.icloud" : (cloud.working ? "icloud.and.arrow.down" : "icloud"))
+                            .font(.caption).foregroundStyle(cloud.hasProblem ? Color.orange : Color.secondary)
+                        Text("Both devices must use the same Apple ID with iCloud on. Open the Mac app after a Plaid sync, and give the phone a moment with the app open.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
             }
@@ -170,7 +172,9 @@ struct OverviewTab: View {
                         ForEach(allAccounts) { a in Toggle(a.name, isOn: isIncluded(a)) }
                         Divider()
                         Button("All accounts") { accountIdsRaw = "" }
-                    } label: { Image(systemName: "checklist") }
+                        Divider()
+                        Button("Reorder Tabs…", action: onReorderTabs)
+                    } label: { Image(systemName: "ellipsis.circle") }
                     .disabled(allAccounts.isEmpty)
                 }
             }
