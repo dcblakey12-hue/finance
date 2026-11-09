@@ -84,7 +84,12 @@ struct OverviewTab: View {
                         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                             tile("Cash today", money(cashToday), cashAccounts.isEmpty ? "No checking or savings" : "\(cashAccounts.count) account\(cashAccounts.count == 1 ? "" : "s")",
                                  tint: cashToday < 0 ? .red : nil)
-                            tile("Net worth", money(netWorth), "Assets \(short(assets)) • Debts \(short(debts))")
+                            NavigationLink {
+                                NetWorthDetail(accounts: accounts, book: book)
+                            } label: {
+                                tile("Net worth", money(netWorth), "Assets \(short(assets)) • Debts \(short(debts)) ›")
+                            }
+                            .buttonStyle(.plain)
                             tile("Lowest in 30 days", low.map { money($0.balance) } ?? "—", low.map { "on \(day($0.date))" } ?? "",
                                  tint: (low?.balance ?? 0) < 0 ? .red : nil)
                             tile("Next payday", nextPay.map { money($0.amount) } ?? "—", nextPay.map { "\($0.name) • \(day($0.date))" } ?? "None in 30 days")
@@ -283,5 +288,67 @@ struct CardOrderSheet: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
         .presentationDetents([.medium])
+    }
+}
+
+/// What makes up net worth: assets and debts listed separately, with totals.
+struct NetWorthDetail: View {
+    let accounts: [Account]
+    let book: BalanceBook
+
+    private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
+    private var debts: [Account] { accounts.filter { $0.type == .creditCard || $0.type == .mortgage } }
+    private var assets: [Account] { accounts.filter { !($0.type == .creditCard || $0.type == .mortgage) } }
+
+    private func section(_ title: String, _ items: [Account]) -> some View {
+        Section {
+            ForEach(AccountType.grouped(items, by: { $0.type }), id: \.type) { group in
+                ForEach(group.items) { a in
+                    NavigationLink {
+                        TransactionsTab(accountId: a.accountId, title: a.name)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(a.name)
+                                Text(typeLabel(group.type)).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(money(book.today(a))).monospacedDigit().foregroundStyle(book.today(a) < 0 ? .red : .primary)
+                        }
+                    }
+                }
+            }
+        } header: {
+            HStack { Text(title); Spacer(); Text(money(book.today(items))).monospacedDigit() }
+        }
+    }
+
+    private func typeLabel(_ t: AccountType) -> String {
+        switch t {
+        case .checking: return "Checking"
+        case .savings: return "Savings"
+        case .creditCard: return "Credit card"
+        case .mortgage: return "Mortgage"
+        case .investment: return "Investment"
+        case .cash: return "Cash"
+        case .property: return "Property"
+        }
+    }
+
+    var body: some View {
+        List {
+            section("Assets", assets)
+            section("Debts", debts)
+            Section {
+                HStack {
+                    Text("Net worth").bold()
+                    Spacer()
+                    let total = book.today(accounts)
+                    Text(money(total)).bold().monospacedDigit().foregroundStyle(total < 0 ? .red : .primary)
+                }
+            }
+        }
+        .navigationTitle("Net Worth")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
