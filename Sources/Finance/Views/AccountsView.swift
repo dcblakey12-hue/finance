@@ -53,6 +53,18 @@ struct AccountsView: View {
             // Double-click (or Return) opens the account's transactions.
             if let a = account(for: ids) { onOpenTransactions(a.accountId) }
         }
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Text("Total balance").font(.headline)
+                Text("all accounts, cards and loans subtracted").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                let total = book.today(accounts)
+                Text(currency.string(from: NSNumber(value: total)) ?? "$0")
+                    .font(.headline.monospacedDigit()).foregroundStyle(total < 0 ? .red : .primary)
+            }
+            .padding(.horizontal).padding(.vertical, 8)
+            .background(.bar)
+        }
         .navigationTitle("Accounts")
         .toolbar {
             ToolbarItem(placement: .primaryAction) { Button("Add Account") { editor = AccountEditor(account: nil) } }

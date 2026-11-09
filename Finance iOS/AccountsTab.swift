@@ -39,6 +39,16 @@ struct AccountsTab: View {
                         description: Text("Import a bank file in the Mac app and it will appear here once iCloud has synced."))
                 }
             }
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    Text("Total balance").font(.headline)
+                    Spacer()
+                    let total = book.today(accounts)
+                    Text(money(total)).font(.headline.monospacedDigit()).foregroundStyle(total < 0 ? .red : .primary)
+                }
+                .padding(.horizontal).padding(.vertical, 8)
+                .background(.bar)
+            }
             .navigationTitle("Accounts")
         }
     }
