@@ -1,6 +1,8 @@
 import Foundation
 import SwiftData
 import EventKit
+import CoreData
+import Combine
 
 // MARK: - Import
 
@@ -531,4 +533,54 @@ enum BackupService {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HHmm"; f.locale = Locale(identifier: "en_US_POSIX")
         return "Finance Backup \(f.string(from: now)).json"
     }
+}
+
+// MARK: - iCloud sync status
+
+/// Watches SwiftData's CloudKit sync so the apps can show when changes last went up / came down.
+@MainActor
+final class CloudSyncMonitor: ObservableObject {
+    @Published var lastExport: Date?      // this device sent changes to iCloud
+    @Published var lastImport: Date?      // this device received changes from iCloud
+    @Published var lastError: String?
+    @Published var working = false
+    private var token: NSObjectProtocol?
+
+    init() {
+        token = NotificationCenter.default.addObserver(
+            forName: NSPersistentCloudKitContainer.eventChangedNotification, object: nil, queue: .main) { [weak self] note in
+            guard let event = note.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
+                    as? NSPersistentCloudKitContainer.Event else { return }
+            let type = event.type, end = event.endDate, ok = event.succeeded
+            let message = event.error?.localizedDescription
+            MainActor.assumeIsolated { self?.record(type: type, end: end, ok: ok, error: message) }
+        }
+    }
+    deinit { if let token { NotificationCenter.default.removeObserver(token) } }
+
+    private func record(type: NSPersistentCloudKitContainer.EventType, end: Date?, ok: Bool, error: String?) {
+        working = end == nil
+        guard let end else { return }
+        if ok {
+            switch type {
+            case .export: lastExport = end
+            case .import: lastImport = end
+            default: break
+            }
+            lastError = nil
+        } else if let error {
+            lastError = error
+        }
+    }
+
+    private func ago(_ d: Date?) -> String {
+        guard let d else { return "not yet this session" }
+        return d.formatted(.relative(presentation: .named))
+    }
+    /// One-line summary for a tooltip or footer.
+    var summary: String {
+        if let lastError { return "iCloud problem: \(lastError)" }
+        return "Sent to iCloud: \(ago(lastExport)). Received from iCloud: \(ago(lastImport))."
+    }
+    var hasProblem: Bool { lastError != nil }
 }
