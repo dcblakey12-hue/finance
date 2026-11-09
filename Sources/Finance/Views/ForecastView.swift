@@ -13,6 +13,7 @@ struct ForecastView: View {
     @State private var fallbackAverage = true
     @State private var inferIncome = true
     @State private var selectedMonthID: Date?
+    @State private var openEnvelopes = Set<Date>()
     @State private var startDate = Calendar.current.startOfDay(for: Date())
     /// Accounts included in the forecast (comma-separated OFX accountIds; empty = all accounts).
     @AppStorage("forecastAccountIds") private var accountIdsRaw = ""
@@ -187,8 +188,23 @@ struct ForecastView: View {
                         stat("Opening", fmt(m.openingBalance))
                         stat("Income", fmt(m.scheduledIncome), .green)
                         stat("Bills", fmt(m.scheduledExpenses))
-                        stat("Envelopes", fmt(m.envelopeSpend))
+                        Button {
+                            if openEnvelopes.contains(m.id) { openEnvelopes.remove(m.id) } else { openEnvelopes.insert(m.id) }
+                        } label: {
+                            HStack(spacing: 3) {
+                                stat("Envelopes", fmt(m.envelopeSpend))
+                                if !m.envelopeLines.isEmpty {
+                                    Image(systemName: openEnvelopes.contains(m.id) ? "chevron.down" : "chevron.right")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }.contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(m.envelopeLines.isEmpty)
+                        .help("Click to see what makes up this figure")
                         stat("Net", fmt(m.net), m.net < 0 ? .red : .green)
+                    }
+                    if openEnvelopes.contains(m.id), !m.envelopeLines.isEmpty {
+                        envelopeDetail(m)
                     }
                     if !m.events.isEmpty {
                         DisclosureGroup("\(m.events.count) scheduled items") {
@@ -211,6 +227,31 @@ struct ForecastView: View {
                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
             }
         }
+    }
+
+    private func envelopeDetail(_ m: ForecastMonth) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Envelope").frame(maxWidth: .infinity, alignment: .leading)
+                Text("Budget").frame(width: 80, alignment: .trailing)
+                Text("Bills").frame(width: 80, alignment: .trailing)
+                Text("Forecast").frame(width: 80, alignment: .trailing)
+            }.font(.caption2.bold()).foregroundStyle(.secondary)
+            ForEach(m.envelopeLines) { l in
+                HStack {
+                    Text(l.name).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(fmt(l.allocated)).frame(width: 80, alignment: .trailing).foregroundStyle(.secondary)
+                    Text(l.billed > 0 ? fmt(l.billed) : "—").frame(width: 80, alignment: .trailing).foregroundStyle(.secondary)
+                    Text(fmt(l.remainder)).frame(width: 80, alignment: .trailing)
+                }.font(.caption.monospacedDigit())
+            }
+            Divider()
+            Text(m.envelopeScale < 1
+                 ? "Forecast = budget minus bills already counted in that category, then scaled to the \(Int((m.envelopeScale * 100).rounded()))% of the month still ahead. Edit amounts on the Budget page."
+                 : "Forecast = budget minus bills already counted in that category, so scheduled bills aren't counted twice. Edit amounts on the Budget page.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(8).background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func stat(_ title: String, _ value: String, _ tint: Color = .primary) -> some View {

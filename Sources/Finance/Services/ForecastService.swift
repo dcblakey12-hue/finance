@@ -141,6 +141,8 @@ enum CashFlowForecastService: Sendable {
 
             // Envelope variable remainder (exclude same-category bills to avoid double count).
             var envelopeSpend = 0.0
+            var lines: [EnvelopeLine] = []
+            var scale = 1.0
             if options.includeEnvelopes {
                 let thisKey = "\(y)-\(m)"
                 let allocations: [String: Double]?
@@ -151,25 +153,33 @@ enum CashFlowForecastService: Sendable {
                     var billsByCat: [String: Double] = [:]
                     for e in events where !e.isIncome { billsByCat[e.category, default: 0] += abs(e.amount) }
                     var remainder = 0.0
+                    var raw: [(String, Double, Double, Double)] = []
                     for (cat, allocated) in allocs {
                         let billed = billsByCat[cat] ?? 0
                         remainder += max(0, allocated - billed)
+                        raw.append((cat, allocated, billed, max(0, allocated - billed)))
                     }
                     // Bills in categories without an envelope were already counted as scheduled;
                     // their remainder is 0, so no double count.
                     if isCurrentMonth {
                         let totalDays = cal.range(of: .day, in: .month, for: monthDate)?.count ?? 30
                         let remainingDays = max(0, totalDays - cal.component(.day, from: options.from) + 1)
-                        remainder *= Double(remainingDays) / Double(totalDays)
+                        scale = Double(remainingDays) / Double(totalDays)
+                        remainder *= scale
                     }
+                    lines = raw.map { EnvelopeLine(name: $0.0, allocated: $0.1, billed: $0.2, remainder: $0.3 * scale) }
+                        .sorted { $0.remainder > $1.remainder }
                     envelopeSpend = remainder
                 } else if options.fallbackAverageVariable, trailingExpenseAvg > 0 {
                     envelopeSpend = max(0, trailingExpenseAvg - scheduledExpenses)
                     if isCurrentMonth {
                         let totalDays = cal.range(of: .day, in: .month, for: monthDate)?.count ?? 30
                         let remainingDays = max(0, totalDays - cal.component(.day, from: options.from) + 1)
-                        envelopeSpend *= Double(remainingDays) / Double(totalDays)
+                        scale = Double(remainingDays) / Double(totalDays)
+                        envelopeSpend *= scale
                     }
+                    lines = [EnvelopeLine(name: "No envelopes set — average monthly spending", allocated: trailingExpenseAvg,
+                                          billed: scheduledExpenses, remainder: envelopeSpend)]
                 }
             }
 
@@ -191,7 +201,8 @@ enum CashFlowForecastService: Sendable {
             months.append(ForecastMonth(
                 monthDate: monthDate, openingBalance: balance, scheduledIncome: income,
                 scheduledExpenses: scheduledExpenses, envelopeSpend: envelopeSpend,
-                net: net, closingBalance: closing, intraMonthLow: low, events: events
+                net: net, closingBalance: closing, intraMonthLow: low, events: events,
+                envelopeLines: lines, envelopeScale: scale
             ))
             balance = closing
         }
