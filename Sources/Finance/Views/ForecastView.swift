@@ -81,6 +81,7 @@ struct ForecastView: View {
     // MARK: - Subviews
 
     private var controls: some View {
+        VStack(alignment: .leading, spacing: 10) {
         HStack(spacing: 16) {
             Picker("Horizon", selection: $monthsToShow) {
                 Text("3 months").tag(3); Text("6 months").tag(6); Text("12 months").tag(12); Text("24 months").tag(24)
@@ -94,11 +95,17 @@ struct ForecastView: View {
                 .help("Choose which accounts the forecast covers")
             DatePicker("Start", selection: $startDate, in: ...Date(), displayedComponents: .date).font(.caption)
             Button("Today") { startDate = Calendar.current.startOfDay(for: Date()) }.font(.caption).disabled(Calendar.current.isDateInToday(startDate))
+            Spacer()
+        }
+        .font(.caption).foregroundStyle(.secondary)
+        HStack(spacing: 16) {
             Toggle("Include envelopes", isOn: $includeEnvelopes).font(.caption)
             Toggle("Fallback avg", isOn: $fallbackAverage).font(.caption)
             Toggle("Estimate income", isOn: $inferIncome).font(.caption)
+            Spacer()
         }
         .font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     private var kpis: some View {
@@ -129,30 +136,34 @@ struct ForecastView: View {
                     description: Text("Add scheduled income or recurring bills in Bills & Calendar, or import an OFX file for history-based estimates.")
                 ).frame(height: 180)
             } else {
+                let lo = forecast.map(\.closingBalance).min() ?? 0
+                let crossesZero = lo < 0
                 Chart(forecast) { m in
-                    BarMark(
-                        x: .value("Month", m.monthDate, unit: .month),
-                        y: .value("Net", m.net)
-                    ).foregroundStyle(m.net >= 0 ? Color.green.opacity(0.55) : Color.red.opacity(0.55))
-                    LineMark(
-                        x: .value("Month", m.monthDate, unit: .month),
-                        y: .value("Balance", m.closingBalance)
-                    ).lineStyle(StrokeStyle(lineWidth: 2.5)).foregroundStyle(.blue)
-                    PointMark(
-                        x: .value("Month", m.monthDate, unit: .month),
-                        y: .value("Balance", m.closingBalance)
-                    ).foregroundStyle(.blue)
-                    RuleMark(y: .value("Zero", 0)).lineStyle(StrokeStyle(lineWidth: 1))
-                        .foregroundStyle(.secondary)
+                    AreaMark(x: .value("Month", m.monthDate, unit: .month), y: .value("Balance", m.closingBalance))
+                        .interpolationMethod(.monotone).foregroundStyle(.blue.opacity(0.12))
+                    LineMark(x: .value("Month", m.monthDate, unit: .month), y: .value("Balance", m.closingBalance))
+                        .interpolationMethod(.monotone).lineStyle(StrokeStyle(lineWidth: 2.5)).foregroundStyle(.blue)
+                    PointMark(x: .value("Month", m.monthDate, unit: .month), y: .value("Balance", m.closingBalance))
+                        .foregroundStyle(m.goesNegative ? .red : .blue)
+                    if crossesZero {
+                        RuleMark(y: .value("Zero", 0)).lineStyle(StrokeStyle(lineWidth: 1, dash: [4])).foregroundStyle(.red.opacity(0.6))
+                    }
                 }
-                .chartXAxis { AxisMarks(values: .stride(by: .month, count: 3)) { _ in
-                    AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month()) } }
+                .chartYScale(domain: .automatic(includesZero: crossesZero))
+                .chartYAxis { AxisMarks { v in AxisGridLine(); AxisValueLabel { if let d = v.as(Double.self) { Text(short(d)) } } } }
+                .chartXAxis { AxisMarks(values: .stride(by: .month, count: monthsToShow > 12 ? 3 : 1)) { _ in
+                    AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
                 .frame(height: 220)
-                .accessibilityLabel("Projected balance line chart with monthly net bars")
-                HStack(spacing: 16) {
-                    Label("Closing balance", systemImage: "line.3.horizontal").font(.caption)
-                    Label("Monthly net (bar)", systemImage: "chart.bar").font(.caption)
-                }.font(.caption).foregroundStyle(.secondary)
+                .accessibilityLabel("Projected closing balance by month")
+                Text("Monthly net change").font(.caption.bold()).foregroundStyle(.secondary)
+                Chart(forecast) { m in
+                    BarMark(x: .value("Month", m.monthDate, unit: .month), y: .value("Net", m.net))
+                        .foregroundStyle(m.net >= 0 ? Color.green.opacity(0.7) : Color.red.opacity(0.7))
+                }
+                .chartYAxis { AxisMarks { v in AxisGridLine(); AxisValueLabel { if let d = v.as(Double.self) { Text(short(d)) } } } }
+                .chartXAxis { AxisMarks(values: .stride(by: .month, count: monthsToShow > 12 ? 3 : 1)) { _ in
+                    AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
+                .frame(height: 100)
             }
         }
     }
@@ -161,27 +172,52 @@ struct ForecastView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Month by month").font(.headline)
             ForEach(forecast) { m in
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text(monthLabel(m.monthDate)).font(.headline)
+                        Text(m.monthDate.formatted(.dateTime.month(.wide).year())).font(.headline)
                         if m.goesNegative {
-                            Text("LOW").font(.caption2.bold()).padding(3).background(Color.red, in: Capsule()).foregroundStyle(.white)
+                            Text("LOW").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.red, in: Capsule()).foregroundStyle(.white)
                         }
                         Spacer()
-                        Text(fmt(m.closingBalance)).font(.title3.monospacedDigit())
+                        Text(fmt(m.closingBalance)).font(.title3.bold().monospacedDigit())
                             .foregroundStyle(m.closingBalance < 0 ? .red : .primary)
                     }
-                    Text("Open \(fmt(m.openingBalance)) • In \(fmt(m.scheduledIncome)) • Bills \(fmt(m.scheduledExpenses)) • Envelopes \(fmt(m.envelopeSpend)) • Net \(fmt(m.net))")
-                        .font(.caption).foregroundStyle(.secondary)
+                    HStack(alignment: .top, spacing: 0) {
+                        stat("Opening", fmt(m.openingBalance))
+                        stat("Income", fmt(m.scheduledIncome), .green)
+                        stat("Bills", fmt(m.scheduledExpenses))
+                        stat("Envelopes", fmt(m.envelopeSpend))
+                        stat("Net", fmt(m.net), m.net < 0 ? .red : .green)
+                    }
                     if !m.events.isEmpty {
-                        Text(m.events.map { "\($0.isIncome ? "+" : "−")\(fmt(abs($0.amount))) \($0.name) (\($0.dueDayLabel))" }.joined(separator: "  •  "))
-                            .font(.caption2).foregroundStyle(.secondary)
+                        DisclosureGroup("\(m.events.count) scheduled items") {
+                            VStack(spacing: 3) {
+                                ForEach(Array(m.events.enumerated()), id: \.offset) { _, e in
+                                    HStack {
+                                        Text(e.date.formatted(.dateTime.month(.abbreviated).day()))
+                                            .foregroundStyle(.secondary).frame(width: 52, alignment: .leading)
+                                        Text(e.name).lineLimit(1)
+                                        Spacer()
+                                        Text("\(e.isIncome ? "+" : "−")\(fmt(abs(e.amount)))").monospacedDigit()
+                                            .foregroundStyle(e.isIncome ? .green : .primary)
+                                    }.font(.caption)
+                                }
+                            }.padding(.top, 4)
+                        }.font(.caption)
                     }
                 }
-                .padding(.vertical, 4)
-                Divider()
+                .padding(12)
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
             }
         }
+    }
+
+    private func stat(_ title: String, _ value: String, _ tint: Color = .primary) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(.callout.monospacedDigit()).foregroundStyle(tint)
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var assumptions: some View {
@@ -195,6 +231,10 @@ struct ForecastView: View {
         .font(.caption).foregroundStyle(.secondary)
     }
 
+    private func short(_ v: Double) -> String {
+        let f = NumberFormatter(); f.numberStyle = .currency; f.maximumFractionDigits = 0; f.locale = .current
+        return f.string(from: NSNumber(value: v)) ?? ""
+    }
     private func fmt(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "$\(String(format: "%.2f", v))" }
     private func monthLabel(_ d: Date) -> String { DateFormatter.localizedString(from: d, dateStyle: .medium, timeStyle: .none) }
 }
