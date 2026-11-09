@@ -205,6 +205,15 @@ struct ForecastEvent: Identifiable {
     }
 }
 
+/// One line of what makes up a month's "Envelopes" figure.
+struct EnvelopeLine: Identifiable {
+    let id = UUID()
+    let name: String
+    let allocated: Double   // envelope size (or the trailing average for the fallback line)
+    let billed: Double      // already covered by scheduled bills in the same category
+    let remainder: Double   // what the forecast adds (after any pro-rating)
+}
+
 struct ForecastMonth: Identifiable {
     let id: Date            // first day of the month
     let monthDate: Date
@@ -217,12 +226,16 @@ struct ForecastMonth: Identifiable {
     let closingBalance: Double
     let intraMonthLow: Double   // lowest balance mid-month after timing events by dueDay
     let events: [ForecastEvent]
+    var envelopeLines: [EnvelopeLine] = []
+    /// Share of the month still ahead (1 = whole month); envelope lines are scaled by this.
+    var envelopeScale: Double = 1
 
     var goesNegative: Bool { closingBalance < 0 || intraMonthLow < 0 }
 
     init(monthDate: Date, openingBalance: Double, scheduledIncome: Double, scheduledExpenses: Double,
          envelopeSpend: Double, net: Double, closingBalance: Double, intraMonthLow: Double,
-         events: [ForecastEvent]) {
+         events: [ForecastEvent], envelopeLines: [EnvelopeLine] = [], envelopeScale: Double = 1) {
+        self.envelopeLines = envelopeLines; self.envelopeScale = envelopeScale
         self.id = monthDate; self.monthDate = monthDate
         self.openingBalance = openingBalance; self.scheduledIncome = scheduledIncome
         self.scheduledExpenses = scheduledExpenses; self.envelopeSpend = envelopeSpend
