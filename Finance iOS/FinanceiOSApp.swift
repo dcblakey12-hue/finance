@@ -32,6 +32,8 @@ struct RootView: View {
 
     var body: some View {
         TabView {
+            OverviewTab()
+                .tabItem { Label("Overview", systemImage: "gauge.with.dots.needle.67percent") }
             AccountsTab()
                 .tabItem { Label("Accounts", systemImage: "building.columns") }
             TransactionsTab()
