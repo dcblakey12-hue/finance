@@ -24,6 +24,7 @@ struct ContentView: View {
     @Environment(\.modelContext) private var context
     @Query private var schedules: [RecurringBill]
     @StateObject private var sync = SyncCoordinator()
+    @StateObject private var cloud = CloudSyncMonitor()
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: AppSection? = .dashboard
     /// OFX accountId shown in Transactions; nil = all accounts.
@@ -76,6 +77,9 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 8) {
+                    Image(systemName: cloud.hasProblem ? "exclamationmark.icloud" : (cloud.working ? "icloud.and.arrow.up" : "icloud"))
+                        .foregroundStyle(cloud.hasProblem ? Color.orange : Color.secondary)
+                        .help(cloud.summary)
                     if sync.busy { ProgressView().controlSize(.small) }
                     else if !sync.status.isEmpty {
                         Text(sync.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 360)
