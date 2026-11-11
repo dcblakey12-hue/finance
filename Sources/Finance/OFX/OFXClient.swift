@@ -351,10 +351,12 @@ struct PlaidClient {
 enum PlaidStore {
     private static let key = "plaidItems"
     static func items() -> [PlaidItem] {
+        guard !DemoMode.isOn else { return [] }   // the demo never touches your real bank links
         guard let d = UserDefaults.standard.data(forKey: key), let v = try? JSONDecoder().decode([PlaidItem].self, from: d) else { return [] }
         return v
     }
     static func save(_ items: [PlaidItem]) {
+        guard !DemoMode.isOn else { return }
         if let d = try? JSONEncoder().encode(items) { UserDefaults.standard.set(d, forKey: key) }
     }
     /// Make the next sync re-download everything (used after deleting synced transactions).

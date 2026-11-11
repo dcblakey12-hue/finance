@@ -9,6 +9,7 @@ struct FinanceApp: App {
     // and linkd complains about missing bundle ID. Activating here lets the
     // SwiftPM fallback path still get keyboard focus.
     init() {
+        if DemoMode.isOn { DemoMode.resetSettings() }
         Task { @MainActor in
             NSApplication.shared.setActivationPolicy(.regular)
             NSApplication.shared.activate(ignoringOtherApps: true)
@@ -25,6 +26,11 @@ struct FinanceApp: App {
             CategoryRule.self,
             CustomCategory.self,
         ])
+        // Demo mode: made-up data in memory only, never synced (see DemoMode).
+        if DemoMode.isOn {
+            do { return try DemoMode.makeContainer(schema: schema) }
+            catch { fatalError("Could not create the demo ModelContainer: \(error)") }
+        }
         // iCloud sync is on only when Info.plist's FinanceCloudContainer names a CloudKit
         // container (e.g. "iCloud.com.you.finance"); empty keeps the data local.
         let cloudID = (Bundle.main.object(forInfoDictionaryKey: "FinanceCloudContainer") as? String)?
@@ -41,6 +47,7 @@ struct FinanceApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .defaultAppStorage(DemoMode.isOn ? DemoMode.defaults : .standard)
                 .onAppear {
                     // Make sure the main window is key + main so the first
                     // sheet (Add Account) can grab first responder.
@@ -59,6 +66,8 @@ struct FinanceApp: App {
                     .keyboardShortcut("b", modifiers: [.command, .shift])
                 Button("Restore from Backup…") { BackupCoordinator.shared.chooseRestore(sharedModelContainer.mainContext) }
                 Button("Start New Empty File…") { BackupCoordinator.shared.startNew(sharedModelContainer.mainContext) }
+                Divider()
+                Button(DemoMode.isOn ? "Leave Demo Mode" : "Show Demo Data…") { DemoMode.confirmAndSwitch() }
             }
         }
     }

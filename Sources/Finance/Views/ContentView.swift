@@ -41,7 +41,7 @@ struct ContentView: View {
                     .badge(s == .scheduled ? ScheduleService.overdue(schedules).count : 0)
                     .tag(s)   // tag last, or the badge wrapper can swallow the sidebar selection
             }
-            .navigationTitle("Finance")
+            .navigationTitle(DemoMode.isOn ? "Finance (Demo)" : "Finance")
         } detail: {
             if let sel = selection {
                 switch sel {
@@ -66,6 +66,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .task {
+            DemoMode.loadIfEmpty(in: context)
             CategoryService.seedIfNeeded(in: context)
             DedupeService.run(in: context)
             ScheduleService.ensureTracking(in: context)
@@ -77,9 +78,18 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 8) {
+                    if DemoMode.isOn {
+                        Button { DemoMode.confirmAndSwitch() } label: {
+                            Text("DEMO DATA").font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(Capsule().fill(Color.orange.opacity(0.85))).foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Made-up data for showing the app. Not saved and never sent to iCloud. Click to go back to your own data.")
+                    } else {
                     Image(systemName: cloud.hasProblem ? "exclamationmark.icloud" : (cloud.working ? "icloud.and.arrow.up" : "icloud"))
                         .foregroundStyle(cloud.hasProblem ? Color.orange : Color.secondary)
                         .help(cloud.summary)
+                    }
                     if sync.busy { ProgressView().controlSize(.small) }
                     else if !sync.status.isEmpty {
                         Text(sync.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 360)

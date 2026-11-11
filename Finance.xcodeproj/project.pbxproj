@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D3E0DA7A0000000000000002 /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E0DA7A0000000000000001 /* DemoData.swift */; };
+		D3E0DA7A0000000000000004 /* DemoDataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E0DA7A0000000000000003 /* DemoDataTests.swift */; };
 		7A1C0E5B2D3F4A6B8C9D0E11 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 495923EF309FDD1F009B93EA /* Assets.xcassets */; };
 		08AAD6BA28CF0019FCE6BF3D /* ScheduleAndCategoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C68FA07408923BA45C57D27 /* ScheduleAndCategoryTests.swift */; };
 		13149FA5B9AAECFF39F24175 /* ScheduleService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 089C8FB08398BD3B67513BF3 /* ScheduleService.swift */; };
@@ -50,6 +52,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		D3E0DA7A0000000000000001 /* DemoData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoData.swift; sourceTree = "<group>"; };
+		D3E0DA7A0000000000000003 /* DemoDataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoDataTests.swift; sourceTree = "<group>"; };
 		089C8FB08398BD3B67513BF3 /* ScheduleService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleService.swift; sourceTree = "<group>"; };
 		0BB77645A27C2FB873E84847 /* Finance.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Finance.entitlements; sourceTree = "<group>"; };
 		0C68FA07408923BA45C57D27 /* ScheduleAndCategoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleAndCategoryTests.swift; sourceTree = "<group>"; };
@@ -133,6 +137,7 @@
 				089C8FB08398BD3B67513BF3 /* ScheduleService.swift */,
 				EAA6EB2CEEA70D3F7B30E17B /* ForecastService.swift */,
 				5564DC3C39BEA041A73F7F59 /* Services.swift */,
+				D3E0DA7A0000000000000001 /* DemoData.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -180,6 +185,7 @@
 				FFFDF0DBB82276AB0EA3AF93 /* CashFlowForecastTests.swift */,
 				C47E0A1B2C3D4E5F60718296 /* CategorizerTests.swift */,
 				0C68FA07408923BA45C57D27 /* ScheduleAndCategoryTests.swift */,
+				D3E0DA7A0000000000000003 /* DemoDataTests.swift */,
 				9804B22AFEDC7F130BAD9903 /* OFXParserTests.swift */,
 			);
 			name = FinanceTests;
@@ -335,6 +341,7 @@
 				39699924A4D30783D9619098 /* CashFlowForecastTests.swift in Sources */,
 				C47E0A1B2C3D4E5F60718295 /* CategorizerTests.swift in Sources */,
 				08AAD6BA28CF0019FCE6BF3D /* ScheduleAndCategoryTests.swift in Sources */,
+				D3E0DA7A0000000000000004 /* DemoDataTests.swift in Sources */,
 				433F2BC28466666AD79D2C47 /* OFXParserTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -372,6 +379,7 @@
 				329AA0175E70330A14FBBBBB /* OFXClient.swift in Sources */,
 				A9C82C3A9BE20277C1EF7F9D /* OFXParser.swift in Sources */,
 				63DF1BB72CEEA18CB6ECD2ED /* Services.swift in Sources */,
+				D3E0DA7A0000000000000002 /* DemoData.swift in Sources */,
 				DC3D94FECF723B55976046D7 /* SettingsView.swift in Sources */,
 				C713FE4B142FBD42A8A78D6E /* TransactionsView.swift in Sources */,
 			);

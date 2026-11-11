@@ -373,11 +373,13 @@ struct CalendarView: View {
         calService.calendarName = name.isEmpty ? CalendarService.defaultCalendarName : name
     }
     private func sync() {
+        guard !DemoMode.isOn else { status = "Calendar sync is turned off in demo mode, so made-up bills never reach your calendar."; return }
         applyName()
         do { let n = try calService.syncBills(bills, accountNames: accountNames); status = "Added \(n) events to the \(calService.calendarName) calendar." }
         catch { status = "Calendar sync failed: \(error.localizedDescription)" }
     }
     private func clear() {
+        guard !DemoMode.isOn else { status = "Calendar sync is turned off in demo mode."; return }
         applyName()
         do { let n = try calService.clearSynced(); status = "Removed \(n) events from the \(calService.calendarName) calendar." }
         catch { status = "Couldn't remove events: \(error.localizedDescription)" }

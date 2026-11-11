@@ -11,8 +11,15 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            if DemoMode.isOn {
+                Section("Demo mode") {
+                    Text("You're looking at made-up data for showing the app. It lives only in memory, is never sent to iCloud, your banks or your calendar, and is thrown away when Finance quits. Your own data is untouched.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Leave Demo Mode…") { DemoMode.confirmAndSwitch() }
+                }
+            }
             backupSection
-            PlaidSettingsSection()
+            if !DemoMode.isOn { PlaidSettingsSection() }
             Section("Privacy") {
                 Text("All financial data is stored locally on your Mac (SwiftData + Keychain). No transactions, passwords, or calendar data leave the device except when you explicitly sync with your bank's OFX server or Apple Calendar.")
                     .font(.caption).foregroundStyle(.secondary)
