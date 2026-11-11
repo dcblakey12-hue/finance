@@ -15,7 +15,6 @@ final class TransactionImportService {
         let acctDesc = FetchDescriptor<Account>(predicate: #Predicate { $0.accountId == acctId })
         if let existing = try? context.fetch(acctDesc).first {
             account = existing
-            if let bal = parsed.balance { account.balance = bal }
         } else {
             account = Account(name: parsed.accountName, type: parsed.isCreditCard ? .creditCard : .checking, accountId: acctId, bankName: parsed.bankId, balance: parsed.balance ?? 0)
             context.insert(account)
@@ -47,6 +46,9 @@ final class TransactionImportService {
             newlyInserted.append(rec)
             inserted += 1
         }
+        // The bank's balance doesn't know about hand-entered transactions it hasn't reported yet,
+        // so those still left over are added on top (matched ones were removed above).
+        if let bal = parsed.balance { account.balance = ManualTransactionService.balance(bank: bal, unreported: manual) }
         try? context.save()
         // Scheduled payments the bank has now reported no longer count as overdue.
         ScheduleService.autoResolve(with: newlyInserted, in: context)
@@ -79,8 +81,21 @@ enum ManualTransactionService {
         return abs(days) <= matchWindowDays
     }
 
+    /// Hand-entered transactions in an account that the bank hasn't reported yet.
+    static func unreported(in accountId: String, from all: [TransactionRecord]) -> [TransactionRecord] {
+        all.filter { $0.accountId == accountId && isManual($0) }
+    }
+
+    /// The balance to show when the bank reports `bank`: its figure plus the hand-entered transactions
+    /// it hasn't reported yet. Each one is replaced by the bank's own record when that arrives (see
+    /// `TransactionImportService`), so it stops counting here at the same moment the bank's figure
+    /// starts including it, and nothing is counted twice.
+    static func balance(bank: Double, unreported: [TransactionRecord]) -> Double {
+        unreported.reduce(bank) { $0 + $1.amount }
+    }
+
     /// Add a transaction by hand. `amount` is signed (negative = money out). The account's
-    /// balance moves by the same amount until the next statement sets it exactly.
+    /// balance moves by the same amount, and keeps it through bank syncs until the bank reports it.
     @discardableResult
     static func add(to account: Account, date: Date, name: String, amount: Double,
                     category: String? = nil, memo: String = "", in context: ModelContext) -> TransactionRecord {
