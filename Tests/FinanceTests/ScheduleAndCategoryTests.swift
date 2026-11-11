@@ -2,6 +2,7 @@ import XCTest
 import SwiftData
 @testable import Finance
 
+@MainActor
 final class ScheduleAndCategoryTests: XCTestCase {
     private let cal = Calendar.current
     private func date(_ y: Int, _ m: Int, _ d: Int) -> Date { cal.date(from: DateComponents(year: y, month: m, day: d))! }
@@ -201,6 +202,7 @@ final class DashboardReportTests: XCTestCase {
     }
 }
 
+@MainActor
 final class TransferTests: XCTestCase {
     private var cal: Calendar = {
         var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c
