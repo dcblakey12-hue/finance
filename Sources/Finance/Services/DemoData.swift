@@ -125,7 +125,7 @@ enum DemoData {
     /// Small deterministic random generator (SplitMix64), so the demo looks the same every time.
     struct SeededRNG: RandomNumberGenerator {
         var state: UInt64
-        func next() -> UInt64 {
+        mutating func next() -> UInt64 {
             state &+= 0x9E37_79B9_7F4A_7C15
             var z = state
             z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
