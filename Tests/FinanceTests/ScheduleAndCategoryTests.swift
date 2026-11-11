@@ -675,7 +675,24 @@ final class ManualTransactionTests: XCTestCase {
         XCTAssertFalse(all.contains { $0.id == manual.id })
         XCTAssertTrue(all.contains { $0.id == other.id })
         XCTAssertEqual(all.first { $0.fitid == "BANK1" }?.category, "Dining")
-        XCTAssertEqual(acct.balance, 48)                                // statement balance wins
+        XCTAssertEqual(acct.balance, 8)                                 // statement's 48, less the gas the bank hasn't reported yet
+    }
+
+    func testBankBalanceKeepsUnreportedManualEntriesWithoutDoubleCounting() {
+        let acct = Account(name: "Checking", type: .checking, accountId: "chk", bankName: "B", balance: 1000)
+        context.insert(acct)
+        ManualTransactionService.add(to: acct, date: Date(), name: "Rent", amount: -600, in: context)
+        XCTAssertEqual(acct.balance, 400)
+        // Bank sync before the bank has the $600: its balance is still 1000.
+        let before = ParsedOFXFile(bankId: "B", accountId: "chk", accountName: "Checking", balance: 1000, transactions: [])
+        _ = TransactionImportService().importParsed(before, into: context)
+        XCTAssertEqual(acct.balance, 400)
+        // Bank posts it: its balance drops to 400 and the hand-entered one is replaced, not added again.
+        let after = ParsedOFXFile(bankId: "B", accountId: "chk", accountName: "Checking", balance: 400,
+            transactions: [OFXTransaction(fitid: "R1", accountId: "chk", date: Date(), name: "RENT", amount: -600, type: .debit, memo: "")])
+        _ = TransactionImportService().importParsed(after, into: context)
+        XCTAssertEqual(acct.balance, 400)
+        XCTAssertTrue(ManualTransactionService.unreported(in: "chk", from: try! context.fetch(FetchDescriptor<TransactionRecord>())).isEmpty)
     }
 
     func testMatchWindowAndAmount() {

@@ -417,12 +417,13 @@ enum PlaidSync {
         // Where each Plaid account goes: a chosen existing account, or a new one.
         var map = item.accountMap
         let accountsNow = (try? context.fetch(FetchDescriptor<Account>())) ?? []
+        var bankBalances: [String: Double] = [:]   // app accountId → the bank's balance
         for pa in item.accounts {
             let target = map[pa.accountId] ?? (PlaidMapping.prefix + pa.accountId)
             map[pa.accountId] = target
-            if let existing = accountsNow.first(where: { $0.accountId == target }) {
-                if let b = pa.appBalance { existing.balance = b }
-            } else {
+            if let b = pa.appBalance { bankBalances[target] = b }
+            // Existing accounts get their balance below, once new transactions have replaced matching hand-entered ones.
+            if !accountsNow.contains(where: { $0.accountId == target }) {
                 let label = pa.mask.map { "\(item.institution) \(pa.name) ••\($0)" } ?? "\(item.institution) \(pa.name)"
                 context.insert(Account(name: label, type: pa.appType, accountId: target, bankName: item.institution, balance: pa.appBalance ?? 0))
             }
@@ -464,6 +465,13 @@ enum PlaidSync {
             let parsed = ParsedOFXFile(bankId: item.institution, accountId: target, accountName: name, balance: nil,
                                        transactions: split.new, isCreditCard: item.accounts.first { $0.accountId == plaidAcct }?.type == "credit")
             insertedCount += TransactionImportService().importParsed(parsed, into: context).inserted
+        }
+        // The bank's balance plus hand-entered transactions (e.g. typed in on the phone) it hasn't reported yet.
+        let remaining = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
+        for a in (try? context.fetch(FetchDescriptor<Account>())) ?? [] {
+            guard let bank = bankBalances[a.accountId] else { continue }
+            a.balance = ManualTransactionService.balance(
+                bank: bank, unreported: ManualTransactionService.unreported(in: a.accountId, from: remaining))
         }
         try? context.save()
 
