@@ -6,7 +6,7 @@ let currency: NumberFormatter = {
     let f = NumberFormatter(); f.numberStyle = .currency; f.locale = .current; return f
 }()
 
-enum AccountType: String, Codable, CaseIterable { case checking, savings, creditCard, mortgage, investment, cash }
+enum AccountType: String, Codable, CaseIterable { case checking, savings, creditCard, mortgage, investment, cash, property }
 
 /// Accounts of one type, for sectioned lists.
 struct AccountGroup<Item> {
@@ -16,7 +16,11 @@ struct AccountGroup<Item> {
 
 extension AccountType {
     /// Order sections appear in: checking first, then savings, cards, mortgage, investments, cash.
-    static let displayOrder: [AccountType] = [.checking, .savings, .creditCard, .mortgage, .investment, .cash]
+    static let displayOrder: [AccountType] = [.checking, .savings, .creditCard, .mortgage, .investment, .cash, .property]
+
+    /// A home or other property whose value you update by hand. It counts in net worth, but it is
+    /// not cash: it is left out of cash balances, running balances and the cash flow forecast.
+    var isPropertyValue: Bool { self == .property }
 
     /// Group items by account type in `displayOrder`, skipping types with no accounts.
     /// Items keep their incoming order within each group.
@@ -90,7 +94,7 @@ final class RecurringBill {
     var id: UUID = UUID()
     var name: String = ""
     var amount: Double = 0
-    var dueDay: Int = 1          // 1..28 (avoid month-end edge cases for v1)
+    var dueDay: Int = 1          // 1..31; a day past the end of a short month lands on its last day
     var category: String = ""
     var isActive: Bool = true
     var lastPaid: Date?
@@ -111,6 +115,8 @@ final class RecurringBill {
     var accountId: String? = nil
     /// Payments dated before this day are never treated as overdue (set when the schedule is created).
     var trackedSince: Date? = nil
+    /// Last day this schedule can land on (nil = repeats forever), e.g. the final payment of a loan.
+    var endDate: Date? = nil
 
     init(id: UUID = UUID(), name: String, amount: Double, dueDay: Int, category: String, isActive: Bool = true, isIncome: Bool = false) {
         self.id = id; self.name = name; self.amount = amount; self.dueDay = dueDay
@@ -199,6 +205,15 @@ struct ForecastEvent: Identifiable {
     }
 }
 
+/// One line of what makes up a month's "Envelopes" figure.
+struct EnvelopeLine: Identifiable {
+    let id = UUID()
+    let name: String
+    let allocated: Double   // envelope size (or the trailing average for the fallback line)
+    let billed: Double      // already covered by scheduled bills in the same category
+    let remainder: Double   // what the forecast adds (after any pro-rating)
+}
+
 struct ForecastMonth: Identifiable {
     let id: Date            // first day of the month
     let monthDate: Date
@@ -211,12 +226,16 @@ struct ForecastMonth: Identifiable {
     let closingBalance: Double
     let intraMonthLow: Double   // lowest balance mid-month after timing events by dueDay
     let events: [ForecastEvent]
+    var envelopeLines: [EnvelopeLine] = []
+    /// Share of the month still ahead (1 = whole month); envelope lines are scaled by this.
+    var envelopeScale: Double = 1
 
     var goesNegative: Bool { closingBalance < 0 || intraMonthLow < 0 }
 
     init(monthDate: Date, openingBalance: Double, scheduledIncome: Double, scheduledExpenses: Double,
          envelopeSpend: Double, net: Double, closingBalance: Double, intraMonthLow: Double,
-         events: [ForecastEvent]) {
+         events: [ForecastEvent], envelopeLines: [EnvelopeLine] = [], envelopeScale: Double = 1) {
+        self.envelopeLines = envelopeLines; self.envelopeScale = envelopeScale
         self.id = monthDate; self.monthDate = monthDate
         self.openingBalance = openingBalance; self.scheduledIncome = scheduledIncome
         self.scheduledExpenses = scheduledExpenses; self.envelopeSpend = envelopeSpend

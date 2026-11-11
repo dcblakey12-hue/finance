@@ -27,7 +27,7 @@ struct CalendarView: View {
     /// Cash on hand: checking, savings and cash accounts (or every account if toggled).
     private var includedAccounts: [Account] {
         let cash: Set<AccountType> = [.checking, .savings, .cash]
-        return accounts.filter { includeAllAccounts || cash.contains($0.type) }
+        return accounts.filter { !$0.type.isPropertyValue && (includeAllAccounts || cash.contains($0.type)) }
     }
     private var book: BalanceBook { BalanceBook(transactions: transactions) }
     private var startingBalance: Double { book.today(includedAccounts) }
@@ -39,7 +39,7 @@ struct CalendarView: View {
         return out
     }
     private var accountNames: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
-    private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }.sorted { $0.name < $1.name } }
+    private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name, isCash: [.checking, .savings, .cash].contains($0.type)) }.sorted { $0.name < $1.name } }
     private var categories: [String] { BudgetService.allCategories(stored: customCategories.map(\.name)) }
     private var items: [ScheduleItem] { bills.filter(\.isActive).map { $0.item(accountNames: accountNames) } }
     private var days: [CalendarDay] {
@@ -275,7 +275,7 @@ struct CalendarView: View {
         afterDismiss { editor = ScheduleEditor(existing: bill, draft: ScheduleDraft(
             name: bill.name, amount: abs(bill.amount), dueDay: bill.dueDay, category: bill.category, isIncome: bill.isIncome,
             isActive: bill.isActive, isTransfer: bill.isTransfer, fromAccountId: bill.fromAccountId, toAccountId: bill.toAccountId,
-            frequency: bill.rule.frequency, secondDay: bill.secondDay, startDate: bill.anchorDate, accountId: bill.accountId)) }
+            frequency: bill.rule.frequency, secondDay: bill.secondDay, startDate: bill.anchorDate, accountId: bill.accountId, endDate: bill.endDate)) }
     }
 
     /// A sheet must finish closing before the next opens, or macOS leaves the window unclickable.
@@ -289,7 +289,7 @@ struct CalendarView: View {
     /// Double-click an empty day: open the Schedule Transaction window with that date filled in.
     private func newSchedule(on date: Date) {
         let day = calendar.component(.day, from: date)
-        let draft = ScheduleDraft(name: "", amount: 0, dueDay: min(day, 28), category: "Other", isIncome: false,
+        let draft = ScheduleDraft(name: "", amount: 0, dueDay: min(day, 31), category: "Other", isIncome: false,
                                   startDate: calendar.startOfDay(for: date))
         editor = ScheduleEditor(existing: nil, draft: draft)
     }

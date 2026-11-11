@@ -3,6 +3,9 @@ import SwiftData
 import Charts
 
 struct ForecastView: View {
+    /// Double-click an envelope row to see that category's transactions for the month.
+    var onOpenTransactions: (TransactionFilters) -> Void = { _ in }
+
     @Query var accounts: [Account]
     @Query var bills: [RecurringBill]
     @Query var envelopes: [Envelope]
@@ -13,6 +16,10 @@ struct ForecastView: View {
     @State private var fallbackAverage = true
     @State private var inferIncome = true
     @State private var selectedMonthID: Date?
+    @State private var openEnvelopes = Set<Date>()
+    @State private var detail: EnvelopeDetail?
+
+    struct EnvelopeDetail: Identifiable { let id = UUID(); let line: EnvelopeLine; let month: ForecastMonth }
     @State private var startDate = Calendar.current.startOfDay(for: Date())
     /// Accounts included in the forecast (comma-separated OFX accountIds; empty = all accounts).
     @AppStorage("forecastAccountIds") private var accountIdsRaw = ""
@@ -37,7 +44,7 @@ struct ForecastView: View {
 
     /// Balance at the start of `startDate`: today's total, wound back by everything posted since.
     var startingBalance: Double {
-        let now = includedAccounts.reduce(0) { $0 + $1.balance }
+        let now = includedAccounts.filter { !$0.type.isPropertyValue }.reduce(0) { $0 + $1.balance }
         let start = Calendar.current.startOfDay(for: startDate)
         guard start < Calendar.current.startOfDay(for: Date()) else { return now }
         return now - transactions.filter { $0.date >= start && (selectedIds?.contains($0.accountId) ?? true) }.reduce(0) { $0 + $1.amount }
@@ -76,11 +83,71 @@ struct ForecastView: View {
             }.padding()
         }
         .navigationTitle("Cash Flow Forecast")
+        .sheet(item: $detail) { d in envelopeSheet(d) }
+    }
+
+    private func envelopeSheet(_ d: EnvelopeDetail) -> some View {
+        let l = d.line, m = d.month
+        let isFallback = l.name.hasPrefix("No envelopes")
+        let bills = m.events.filter { !$0.isIncome && ($0.category == l.name || isFallback) }
+        let billTotal = bills.reduce(0) { $0 + abs($1.amount) }
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading) {
+                    Text(isFallback ? "Average spending" : l.name).font(.title3.bold())
+                    Text(m.monthDate.formatted(.dateTime.month(.wide).year())).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { detail = nil }.keyboardShortcut(.defaultAction)
+            }
+            GroupBox {
+                HStack {
+                    Text(isFallback ? "Average monthly spending (last 3 months)" : "Budget (envelope)")
+                    Spacer()
+                    Text(fmt(l.allocated)).font(.title3.monospacedDigit())
+                }.padding(4)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(isFallback ? "Scheduled bills this month" : "Bills in this category").font(.headline)
+                if bills.isEmpty {
+                    Text("No scheduled bills in this category this month.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    List(bills) { e in
+                        HStack {
+                            Text(e.date.formatted(.dateTime.month(.abbreviated).day())).foregroundStyle(.secondary)
+                                .frame(width: 56, alignment: .leading)
+                            Text(e.name)
+                            Spacer()
+                            Text(fmt(abs(e.amount))).monospacedDigit()
+                        }
+                    }.frame(minHeight: 80, maxHeight: 220)
+                }
+                HStack { Text("Bills total").bold(); Spacer(); Text(fmt(billTotal)).bold().monospacedDigit() }
+            }
+            Divider()
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Left for everyday spending").font(.headline)
+                    Text("\(fmt(l.allocated)) budget − \(fmt(l.billed)) bills" + (m.envelopeScale < 1 ? ", × \(Int((m.envelopeScale * 100).rounded()))% of the month left" : ""))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(fmt(l.remainder)).font(.title3.bold().monospacedDigit())
+            }
+            if !isFallback {
+                Button("Show \(l.name) transactions") {
+                    detail = nil
+                    onOpenTransactions(TransactionFilters(category: l.name, month: m.monthDate))
+                }
+            }
+        }
+        .padding(20).frame(width: 460)
     }
 
     // MARK: - Subviews
 
     private var controls: some View {
+        VStack(alignment: .leading, spacing: 10) {
         HStack(spacing: 16) {
             Picker("Horizon", selection: $monthsToShow) {
                 Text("3 months").tag(3); Text("6 months").tag(6); Text("12 months").tag(12); Text("24 months").tag(24)
@@ -94,11 +161,17 @@ struct ForecastView: View {
                 .help("Choose which accounts the forecast covers")
             DatePicker("Start", selection: $startDate, in: ...Date(), displayedComponents: .date).font(.caption)
             Button("Today") { startDate = Calendar.current.startOfDay(for: Date()) }.font(.caption).disabled(Calendar.current.isDateInToday(startDate))
+            Spacer()
+        }
+        .font(.caption).foregroundStyle(.secondary)
+        HStack(spacing: 16) {
             Toggle("Include envelopes", isOn: $includeEnvelopes).font(.caption)
             Toggle("Fallback avg", isOn: $fallbackAverage).font(.caption)
             Toggle("Estimate income", isOn: $inferIncome).font(.caption)
+            Spacer()
         }
         .font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     private var kpis: some View {
@@ -129,30 +202,34 @@ struct ForecastView: View {
                     description: Text("Add scheduled income or recurring bills in Bills & Calendar, or import an OFX file for history-based estimates.")
                 ).frame(height: 180)
             } else {
+                let lo = forecast.map(\.closingBalance).min() ?? 0
+                let crossesZero = lo < 0
                 Chart(forecast) { m in
-                    BarMark(
-                        x: .value("Month", m.monthDate, unit: .month),
-                        y: .value("Net", m.net)
-                    ).foregroundStyle(m.net >= 0 ? Color.green.opacity(0.55) : Color.red.opacity(0.55))
-                    LineMark(
-                        x: .value("Month", m.monthDate, unit: .month),
-                        y: .value("Balance", m.closingBalance)
-                    ).lineStyle(StrokeStyle(lineWidth: 2.5)).foregroundStyle(.blue)
-                    PointMark(
-                        x: .value("Month", m.monthDate, unit: .month),
-                        y: .value("Balance", m.closingBalance)
-                    ).foregroundStyle(.blue)
-                    RuleMark(y: .value("Zero", 0)).lineStyle(StrokeStyle(lineWidth: 1))
-                        .foregroundStyle(.secondary)
+                    AreaMark(x: .value("Month", m.monthDate, unit: .month), y: .value("Balance", m.closingBalance))
+                        .interpolationMethod(.monotone).foregroundStyle(.blue.opacity(0.12))
+                    LineMark(x: .value("Month", m.monthDate, unit: .month), y: .value("Balance", m.closingBalance))
+                        .interpolationMethod(.monotone).lineStyle(StrokeStyle(lineWidth: 2.5)).foregroundStyle(.blue)
+                    PointMark(x: .value("Month", m.monthDate, unit: .month), y: .value("Balance", m.closingBalance))
+                        .foregroundStyle(m.goesNegative ? .red : .blue)
+                    if crossesZero {
+                        RuleMark(y: .value("Zero", 0)).lineStyle(StrokeStyle(lineWidth: 1, dash: [4])).foregroundStyle(.red.opacity(0.6))
+                    }
                 }
-                .chartXAxis { AxisMarks(values: .stride(by: .month, count: 3)) { _ in
-                    AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month()) } }
+                .chartYScale(domain: .automatic(includesZero: crossesZero))
+                .chartYAxis { AxisMarks { v in AxisGridLine(); AxisValueLabel { if let d = v.as(Double.self) { Text(short(d)) } } } }
+                .chartXAxis { AxisMarks(values: .stride(by: .month, count: monthsToShow > 12 ? 3 : 1)) { _ in
+                    AxisGridLine(); AxisTick(); AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
                 .frame(height: 220)
-                .accessibilityLabel("Projected balance line chart with monthly net bars")
-                HStack(spacing: 16) {
-                    Label("Closing balance", systemImage: "line.3.horizontal").font(.caption)
-                    Label("Monthly net (bar)", systemImage: "chart.bar").font(.caption)
-                }.font(.caption).foregroundStyle(.secondary)
+                .accessibilityLabel("Projected closing balance by month")
+                Text("Monthly net change").font(.caption.bold()).foregroundStyle(.secondary)
+                Chart(forecast) { m in
+                    BarMark(x: .value("Month", m.monthDate, unit: .month), y: .value("Net", m.net))
+                        .foregroundStyle(m.net >= 0 ? Color.green.opacity(0.7) : Color.red.opacity(0.7))
+                }
+                .chartYAxis { AxisMarks { v in AxisGridLine(); AxisValueLabel { if let d = v.as(Double.self) { Text(short(d)) } } } }
+                .chartXAxis { AxisMarks(values: .stride(by: .month, count: monthsToShow > 12 ? 3 : 1)) { _ in
+                    AxisValueLabel(format: .dateTime.month(.abbreviated)) } }
+                .frame(height: 100)
             }
         }
     }
@@ -161,27 +238,95 @@ struct ForecastView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Month by month").font(.headline)
             ForEach(forecast) { m in
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text(monthLabel(m.monthDate)).font(.headline)
+                        Text(m.monthDate.formatted(.dateTime.month(.wide).year())).font(.headline)
                         if m.goesNegative {
-                            Text("LOW").font(.caption2.bold()).padding(3).background(Color.red, in: Capsule()).foregroundStyle(.white)
+                            Text("LOW").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.red, in: Capsule()).foregroundStyle(.white)
                         }
                         Spacer()
-                        Text(fmt(m.closingBalance)).font(.title3.monospacedDigit())
+                        Text(fmt(m.closingBalance)).font(.title3.bold().monospacedDigit())
                             .foregroundStyle(m.closingBalance < 0 ? .red : .primary)
                     }
-                    Text("Open \(fmt(m.openingBalance)) • In \(fmt(m.scheduledIncome)) • Bills \(fmt(m.scheduledExpenses)) • Envelopes \(fmt(m.envelopeSpend)) • Net \(fmt(m.net))")
-                        .font(.caption).foregroundStyle(.secondary)
+                    HStack(alignment: .top, spacing: 0) {
+                        stat("Opening", fmt(m.openingBalance))
+                        stat("Income", fmt(m.scheduledIncome), .green)
+                        stat("Bills", fmt(m.scheduledExpenses))
+                        Button {
+                            if openEnvelopes.contains(m.id) { openEnvelopes.remove(m.id) } else { openEnvelopes.insert(m.id) }
+                        } label: {
+                            HStack(spacing: 3) {
+                                stat("Envelopes", fmt(m.envelopeSpend))
+                                if !m.envelopeLines.isEmpty {
+                                    Image(systemName: openEnvelopes.contains(m.id) ? "chevron.down" : "chevron.right")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }.contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).disabled(m.envelopeLines.isEmpty)
+                        .help("Click to see what makes up this figure")
+                        stat("Net", fmt(m.net), m.net < 0 ? .red : .green)
+                    }
+                    if openEnvelopes.contains(m.id), !m.envelopeLines.isEmpty {
+                        envelopeDetail(m)
+                    }
                     if !m.events.isEmpty {
-                        Text(m.events.map { "\($0.isIncome ? "+" : "−")\(fmt(abs($0.amount))) \($0.name) (\($0.dueDayLabel))" }.joined(separator: "  •  "))
-                            .font(.caption2).foregroundStyle(.secondary)
+                        DisclosureGroup("\(m.events.count) scheduled items") {
+                            VStack(spacing: 3) {
+                                ForEach(Array(m.events.enumerated()), id: \.offset) { _, e in
+                                    HStack {
+                                        Text(e.date.formatted(.dateTime.month(.abbreviated).day()))
+                                            .foregroundStyle(.secondary).frame(width: 52, alignment: .leading)
+                                        Text(e.name).lineLimit(1)
+                                        Spacer()
+                                        Text("\(e.isIncome ? "+" : "−")\(fmt(abs(e.amount)))").monospacedDigit()
+                                            .foregroundStyle(e.isIncome ? .green : .primary)
+                                    }.font(.caption)
+                                }
+                            }.padding(.top, 4)
+                        }.font(.caption)
                     }
                 }
-                .padding(.vertical, 4)
-                Divider()
+                .padding(12)
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
             }
         }
+    }
+
+    private func envelopeDetail(_ m: ForecastMonth) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Envelope").frame(maxWidth: .infinity, alignment: .leading)
+                Text("Budget").frame(width: 80, alignment: .trailing)
+                Text("Bills").frame(width: 80, alignment: .trailing)
+                Text("Forecast").frame(width: 80, alignment: .trailing)
+            }.font(.caption2.bold()).foregroundStyle(.secondary)
+            ForEach(m.envelopeLines) { l in
+                HStack {
+                    Text(l.name).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(fmt(l.allocated)).frame(width: 80, alignment: .trailing).foregroundStyle(.secondary)
+                    Text(l.billed > 0 ? fmt(l.billed) : "—").frame(width: 80, alignment: .trailing).foregroundStyle(.secondary)
+                    Text(fmt(l.remainder)).frame(width: 80, alignment: .trailing)
+                }.font(.caption.monospacedDigit())
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { detail = EnvelopeDetail(line: l, month: m) }
+                .help("Double-click to see the budget and the bills behind this row")
+            }
+            Divider()
+            Text(m.envelopeScale < 1
+                 ? "Forecast = budget minus bills already counted in that category, then scaled to the \(Int((m.envelopeScale * 100).rounded()))% of the month still ahead. Edit amounts on the Budget page."
+                 : "Forecast = budget minus bills already counted in that category, so scheduled bills aren't counted twice. Double-click a row to see the budget and the bills behind it.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(8).background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func stat(_ title: String, _ value: String, _ tint: Color = .primary) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(.callout.monospacedDigit()).foregroundStyle(tint)
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var assumptions: some View {
@@ -195,6 +340,10 @@ struct ForecastView: View {
         .font(.caption).foregroundStyle(.secondary)
     }
 
+    private func short(_ v: Double) -> String {
+        let f = NumberFormatter(); f.numberStyle = .currency; f.maximumFractionDigits = 0; f.locale = .current
+        return f.string(from: NSNumber(value: v)) ?? ""
+    }
     private func fmt(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "$\(String(format: "%.2f", v))" }
     private func monthLabel(_ d: Date) -> String { DateFormatter.localizedString(from: d, dateStyle: .medium, timeStyle: .none) }
 }

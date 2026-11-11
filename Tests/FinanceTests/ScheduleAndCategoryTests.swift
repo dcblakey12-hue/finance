@@ -1119,3 +1119,78 @@ final class ForecastAccountsTests: XCTestCase {
         XCTAssertEqual(names(["visa"]), ["Netflix", "Pay Visa"])        // card only: the payment arrives
     }
 }
+
+final class DashboardMathTests: XCTestCase {
+    private var cal: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c }
+    private func d(_ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: 2026, month: m, day: day))! }
+
+    func testNetWorthHistoryUndoesLaterTransactions() {
+        // Today Nov 8: 1000 now. +500 on Nov 2, -200 on Oct 20.  End of Oct = 1000 - 500 = 500; end of Sep = 500 + 200 = 700.
+        let tx: [(date: Date, amount: Double)] = [(d(11, 2), 500), (d(10, 20), -200), (d(11, 20), 999)]   // last one is future: ignored
+        let pts = DashboardMath.netWorthHistory(currentTotal: 1000, transactions: tx, months: 2, today: d(11, 8), calendar: cal)
+        XCTAssertEqual(pts.map(\.balance), [700, 500, 1000])
+        XCTAssertEqual(pts.last?.date, d(11, 8))
+    }
+
+    func testProjectionStartsAtTodayAndHitsPayday() {
+        let pay = ScheduleItem(name: "Pay", amount: 2000, dueDay: 15, category: "Income")
+        let rent = ScheduleItem(name: "Rent", amount: -1200, dueDay: 12, category: "Housing")
+        let r = DashboardMath.projection(days: 10, schedules: [pay, rent], balanceToday: 500, cashAccountIds: [], today: d(11, 8), calendar: cal)
+        XCTAssertEqual(r.points.first?.date, d(11, 8))
+        XCTAssertEqual(r.points.first?.balance, 500)
+        XCTAssertEqual(r.points.last?.date, d(11, 18))
+        XCTAssertEqual(r.points.first { $0.date == d(11, 12) }?.balance, -700)
+        XCTAssertEqual(r.points.last?.balance, 1300)
+        XCTAssertEqual(r.upcoming.map(\.name), ["Rent", "Pay"])
+    }
+}
+
+final class MonthEndTests: XCTestCase {
+    func testThirtyFirstLandsOnLastDayOfShortMonths() {
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!
+        func d(_ y: Int, _ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: y, month: m, day: day))! }
+        let rule = ScheduleRule(frequency: .monthly, dueDay: 31)
+        XCTAssertTrue(rule.occurs(on: d(2026, 1, 31), calendar: cal))
+        XCTAssertTrue(rule.occurs(on: d(2026, 2, 28), calendar: cal))
+        XCTAssertFalse(rule.occurs(on: d(2026, 2, 27), calendar: cal))
+        XCTAssertTrue(rule.occurs(on: d(2026, 4, 30), calendar: cal))
+        let twice = ScheduleRule(frequency: .semimonthly, dueDay: 15, secondDay: 31)
+        XCTAssertEqual(twice.dates(from: d(2026, 2, 1), to: d(2026, 2, 28), calendar: cal), [d(2026, 2, 15), d(2026, 2, 28)])
+    }
+}
+
+@MainActor
+final class ReconciledTests: XCTestCase {
+    func testBankRecordsAreReconciledAndHandEnteredOnesAreNot() {
+        func tx(_ fitid: String) -> TransactionRecord {
+            TransactionRecord(fitid: fitid, accountId: "a", accountName: "A", date: Date(), name: "x", amount: -5, type: .debit)
+        }
+        XCTAssertTrue(tx("20260101-123").isReconciled)                           // file import
+        XCTAssertTrue(tx(PlaidMapping.prefix + "abc").isReconciled)              // bank sync
+        XCTAssertFalse(tx(ManualTransactionService.prefix + "1").isReconciled)   // typed in by hand
+    }
+}
+
+final class ScheduleEndTests: XCTestCase {
+    func testEndDateStopsOccurrencesAndNthDateCounts() {
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!
+        func d(_ y: Int, _ m: Int, _ day: Int) -> Date { cal.date(from: DateComponents(year: y, month: m, day: day))! }
+        var rule = ScheduleRule(frequency: .monthly, dueDay: 15)
+        XCTAssertEqual(rule.nthDate(3, from: d(2026, 11, 8), calendar: cal), d(2027, 1, 15))   // Nov, Dec, Jan
+        rule.end = d(2027, 1, 15)
+        XCTAssertTrue(rule.occurs(on: d(2027, 1, 15), calendar: cal))
+        XCTAssertFalse(rule.occurs(on: d(2027, 2, 15), calendar: cal))
+        XCTAssertEqual(rule.dates(from: d(2026, 11, 1), to: d(2027, 6, 1), calendar: cal).count, 3)
+        XCTAssertNil(rule.nextDate(from: d(2027, 1, 16), calendar: cal))
+    }
+}
+
+final class PropertyAccountTests: XCTestCase {
+    func testPropertyIsGroupedLastAndFlagged() {
+        XCTAssertTrue(AccountType.property.isPropertyValue)
+        XCTAssertFalse(AccountType.checking.isPropertyValue)
+        XCTAssertEqual(AccountType.displayOrder.last, .property)
+        let groups = AccountType.grouped([AccountType.property, .checking], by: { $0 })
+        XCTAssertEqual(groups.map(\.type), [.checking, .property])
+    }
+}

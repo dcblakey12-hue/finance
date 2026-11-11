@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import SwiftData
+import Combine
 
 /// Direct OFX server client (OFXHome). Many banks no longer support this;
 /// file import is the reliable path. This client exists so both modes work
@@ -86,21 +87,68 @@ final class KeychainStore: Sendable {
 /// Small generic Keychain helper for the Plaid keys and access tokens (this Mac only, never synced).
 enum SecretStore {
     private static let service = "com.finance.app.plaid"
-    static func set(_ value: String, for key: String) {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: key]
-        SecItemDelete(q as CFDictionary)
-        guard !value.isEmpty else { return }
-        var a = q
-        a[kSecValueData as String] = Data(value.utf8)
+    /// Everything (client ID, secret, bank tokens) lives in ONE Keychain item, so macOS asks for the
+    /// password at most once per launch instead of once per secret.
+    private static let vaultAccount = "vault"
+    private static var vault: [String: String]?
+    private static let lock = NSLock()
+
+    private static func baseQuery(_ account: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+    }
+
+    private static func loadVault() -> [String: String] {
+        if let vault { return vault }
+        var loaded: [String: String] = [:]
+        var q = baseQuery(vaultAccount)
+        q[kSecReturnData as String] = true; q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        if SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let d = item as? Data,
+           let v = try? JSONDecoder().decode([String: String].self, from: d) {
+            loaded = v
+        } else {
+            // First run after the upgrade: fold the old one-item-per-secret entries into the vault.
+            var all: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                      kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitAll]
+            var found: CFTypeRef?
+            if SecItemCopyMatching(all as CFDictionary, &found) == errSecSuccess, let rows = found as? [[String: Any]] {
+                for row in rows {
+                    guard let account = row[kSecAttrAccount as String] as? String, account != vaultAccount else { continue }
+                    var one = baseQuery(account)
+                    one[kSecReturnData as String] = true; one[kSecMatchLimit as String] = kSecMatchLimitOne
+                    var data: CFTypeRef?
+                    if SecItemCopyMatching(one as CFDictionary, &data) == errSecSuccess, let d = data as? Data,
+                       let str = String(data: d, encoding: .utf8) { loaded[account] = str }
+                }
+                all[kSecReturnAttributes as String] = nil
+                if !loaded.isEmpty { saveVault(loaded) }
+            }
+        }
+        vault = loaded
+        return loaded
+    }
+
+    private static func saveVault(_ v: [String: String]) {
+        guard let data = try? JSONEncoder().encode(v) else { return }
+        SecItemDelete(baseQuery(vaultAccount) as CFDictionary)
+        var a = baseQuery(vaultAccount)
+        a[kSecValueData as String] = data
         a[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         SecItemAdd(a as CFDictionary, nil)
     }
+
+    static func set(_ value: String, for key: String) {
+        lock.lock(); defer { lock.unlock() }
+        var v = loadVault()
+        if value.isEmpty { v[key] = nil } else { v[key] = value }
+        vault = v
+        saveVault(v)
+        SecItemDelete(baseQuery(key) as CFDictionary)     // drop any old per-secret item
+    }
+
     static func get(_ key: String) -> String? {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                kSecAttrAccount as String: key, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let d = item as? Data else { return nil }
-        return String(data: d, encoding: .utf8)
+        lock.lock(); defer { lock.unlock() }
+        return loadVault()[key]
     }
 }
 
@@ -316,6 +364,40 @@ enum PlaidStore {
     static func remove(_ itemId: String) {
         SecretStore.set("", for: "plaid.token.\(itemId)")
         save(items().filter { $0.itemId != itemId })
+    }
+}
+
+/// Runs bank syncs for the whole app: the toolbar button, launch, and coming back to the app.
+@MainActor
+final class SyncCoordinator: ObservableObject {
+    @Published var busy = false
+    @Published var status = ""
+    private var lastRun: Date?
+
+    var hasBanks: Bool { !PlaidStore.items().isEmpty }
+
+    func syncAll(in context: ModelContext) {
+        guard !busy, hasBanks else { return }
+        busy = true; status = "Syncing…"
+        Task {
+            var lines: [String] = []
+            for item in PlaidStore.items() {
+                do { lines.append(try await PlaidSync.sync(item.itemId, in: context)) }
+                catch { lines.append("\(item.institution): \(error.localizedDescription)") }
+            }
+            status = lines.joined(separator: " ")
+            lastRun = Date(); busy = false
+            // Clear the message after a while.
+            let shown = status
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            if status == shown && !busy { status = "" }
+        }
+    }
+
+    /// Automatic sync: at most once every `minutes`.
+    func syncIfStale(minutes: Double = 30, in context: ModelContext) {
+        if let lastRun, Date().timeIntervalSince(lastRun) < minutes * 60 { return }
+        syncAll(in: context)
     }
 }
 

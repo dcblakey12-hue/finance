@@ -53,6 +53,18 @@ struct AccountsView: View {
             // Double-click (or Return) opens the account's transactions.
             if let a = account(for: ids) { onOpenTransactions(a.accountId) }
         }
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Text("Total balance").font(.headline)
+                Text("all accounts, cards and loans subtracted").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                let total = book.today(accounts)
+                Text(currency.string(from: NSNumber(value: total)) ?? "$0")
+                    .font(.headline.monospacedDigit()).foregroundStyle(total < 0 ? .red : .primary)
+            }
+            .padding(.horizontal).padding(.vertical, 8)
+            .background(.bar)
+        }
         .navigationTitle("Accounts")
         .toolbar {
             ToolbarItem(placement: .primaryAction) { Button("Add Account") { editor = AccountEditor(account: nil) } }
@@ -124,6 +136,7 @@ struct AccountsView: View {
         case .mortgage: return "house"
         case .investment: return "chart.line.uptrend.xyaxis"
         case .cash: return "banknote"
+        case .property: return "house.fill"
         }
     }
 }
@@ -136,6 +149,7 @@ func accountTypeLabel(_ t: AccountType) -> String {
     case .mortgage: return "Mortgage"
     case .investment: return "Investment / Brokerage"
     case .cash: return "Cash"
+    case .property: return "Property (home value)"
     }
 }
 
@@ -165,7 +179,7 @@ private struct AccountEditorSheet: View {
 
     private var isEditing: Bool { editor.account != nil }
     private var idTaken: Bool { accountId != editor.account?.accountId && existingIds.contains(accountId) }
-    private var canSave: Bool { !name.isEmpty && !accountId.isEmpty && !idTaken }
+    private var canSave: Bool { !name.isEmpty && (!accountId.isEmpty || type == .property) && !idTaken }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -180,17 +194,19 @@ private struct AccountEditorSheet: View {
                     ForEach(AccountType.allCases, id: \.self) { Text(accountTypeLabel($0)).tag($0) }
                 }.labelsHidden()
             }
-            field("Bank") {
-                TextField("Manual", text: $bankName)
+            field(type == .property ? "Address or note (optional)" : "Bank") {
+                TextField(type == .property ? "123 Main St" : "Manual", text: $bankName)
                     .focused($focusedField, equals: .bank)
                     .onSubmit { focusedField = .accountId }
             }
-            field(idTaken ? "Account ID (already used by another account)" : "Account ID (OFX ACCTID)") {
-                TextField("•••• last 4 shown in UI", text: $accountId)
-                    .focused($focusedField, equals: .accountId)
-                    .onSubmit { focusedField = .balance }
+            if type != .property {
+                field(idTaken ? "Account ID (already used by another account)" : "Account ID (OFX ACCTID)") {
+                    TextField("•••• last 4 shown in UI", text: $accountId)
+                        .focused($focusedField, equals: .accountId)
+                        .onSubmit { focusedField = .balance }
+                }
             }
-            field(isEditing ? "Balance" : "Opening balance (optional)") {
+            field(type == .property ? "Estimated value" : (isEditing ? "Balance" : "Opening balance (optional)")) {
                 TextField("0.00", text: $balance)
                     .focused($focusedField, equals: .balance)
                     .onSubmit { submit() }
@@ -232,7 +248,9 @@ private struct AccountEditorSheet: View {
     private func submit() {
         guard canSave else { return }
         let cleanedBalance = balance.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: "")
+        // A property has no bank ID: give it its own.
+        let id = (type == .property && accountId.isEmpty) ? "property-\(UUID().uuidString.prefix(8))" : accountId
         onSave(.init(name: name, type: type, bankName: bankName.isEmpty ? "Manual" : bankName,
-                     accountId: accountId, balance: Double(cleanedBalance) ?? 0))
+                     accountId: id, balance: Double(cleanedBalance) ?? 0))
     }
 }

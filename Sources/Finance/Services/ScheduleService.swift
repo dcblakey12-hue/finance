@@ -24,19 +24,26 @@ struct ScheduleRule: Equatable {
     var anchor: Date? = nil
     /// Specific days (start of day) to leave out, e.g. payments already entered or skipped.
     var excluded: Set<Date> = []
+    /// No occurrences after this day (nil = never ends).
+    var end: Date? = nil
 
     static let fallbackAnchor = Date(timeIntervalSinceReferenceDate: 0)
 
-    private static func clamp(_ d: Int) -> Int { min(max(d, 1), 28) }
+    private static func clamp(_ d: Int) -> Int { min(max(d, 1), 31) }
+    /// The day a "31st" repeat actually lands on in `date`'s month: the last day if the month is shorter.
+    private static func landing(_ d: Int, in date: Date, calendar: Calendar) -> Int {
+        min(clamp(d), calendar.range(of: .day, in: .month, for: date)?.count ?? 28)
+    }
 
     func occurs(on date: Date, calendar: Calendar = .current) -> Bool {
+        if let end, calendar.startOfDay(for: date) > calendar.startOfDay(for: end) { return false }
         if !excluded.isEmpty, excluded.contains(calendar.startOfDay(for: date)) { return false }
         switch frequency {
         case .monthly:
-            return calendar.component(.day, from: date) == Self.clamp(dueDay)
+            return calendar.component(.day, from: date) == Self.landing(dueDay, in: date, calendar: calendar)
         case .semimonthly:
             let d = calendar.component(.day, from: date)
-            return d == Self.clamp(dueDay) || d == Self.clamp(secondDay)
+            return d == Self.landing(dueDay, in: date, calendar: calendar) || d == Self.landing(secondDay, in: date, calendar: calendar)
         case .weekly, .biweekly:
             let start = calendar.startOfDay(for: anchor ?? Self.fallbackAnchor)
             let days = calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: date)).day ?? 1
@@ -69,6 +76,22 @@ struct ScheduleRule: Equatable {
         return nil
     }
 
+    /// The date of the nth upcoming occurrence on or after `from` (n = 1 is the next one), ignoring `end`.
+    func nthDate(_ n: Int, from: Date, calendar: Calendar = .current) -> Date? {
+        guard n >= 1 else { return nil }
+        var open = self; open.end = nil
+        var day = calendar.startOfDay(for: from)
+        var found = 0
+        for _ in 0..<(n * 400) {
+            guard let d = open.nextDate(from: day, calendar: calendar) else { return nil }
+            found += 1
+            if found == n { return d }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: d) else { return nil }
+            day = next
+        }
+        return nil
+    }
+
     /// Average number of times per month, for monthly totals and budgets.
     var monthlyFactor: Double {
         switch frequency {
@@ -80,6 +103,12 @@ struct ScheduleRule: Equatable {
     }
 
     func summary(calendar: Calendar = .current) -> String {
+        let base = baseSummary(calendar: calendar)
+        guard let end else { return base }
+        return "\(base), ends \(end.formatted(.dateTime.month(.abbreviated).day().year()))"
+    }
+
+    private func baseSummary(calendar: Calendar) -> String {
         func ordinal(_ n: Int) -> String {
             let f = NumberFormatter(); f.numberStyle = .ordinal
             return f.string(from: NSNumber(value: n)) ?? "\(n)"
@@ -146,7 +175,7 @@ struct OverdueItem: Identifiable {
 struct ScheduleDraft: Equatable {
     var name: String
     var amount: Double      // always positive; `isIncome` gives the direction
-    var dueDay: Int         // 1...28
+    var dueDay: Int         // 1...31 (a day past the end of a short month lands on its last day)
     var category: String
     var isIncome: Bool
     var isActive: Bool = true
@@ -160,15 +189,17 @@ struct ScheduleDraft: Equatable {
     var startDate: Date? = nil
     /// The account (OFX accountId) a bill is paid from or a payday arrives in. Not used for transfers.
     var accountId: String? = nil
+    /// Last day it can land on (nil = never ends).
+    var endDate: Date? = nil
 
-    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: startDate) }
+    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: startDate, end: endDate) }
     /// Valid when the chosen pattern is complete (twice a month needs two different days).
-    var scheduleIsValid: Bool { frequency != .semimonthly || min(max(dueDay, 1), 28) != min(max(secondDay, 1), 28) }
+    var scheduleIsValid: Bool { frequency != .semimonthly || min(max(dueDay, 1), 31) != min(max(secondDay, 1), 31) }
 }
 
 enum ScheduleService {
     /// Pre-fill a schedule from an existing transaction: same merchant, amount,
-    /// and day of month (clamped to 28, the latest day every month has).
+    /// and day of month (31 allowed; short months use their last day).
     static func draft(fromName name: String, amount: Double, date: Date, category: String,
                       accountId: String? = nil,
                       transferFrom: String? = nil, transferTo: String? = nil,
@@ -178,7 +209,7 @@ enum ScheduleService {
         let merchant = MerchantNormalizer.key(for: name)
         let displayName = merchant.isEmpty ? name : merchant.capitalized
         if let from = transferFrom, let to = transferTo, from != to {
-            return ScheduleDraft(name: displayName, amount: abs(amount), dueDay: min(max(day, 1), 28),
+            return ScheduleDraft(name: displayName, amount: abs(amount), dueDay: min(max(day, 1), 31),
                                  category: Categorizer.transfer, isIncome: false,
                                  isTransfer: true, fromAccountId: from, toAccountId: to)
         }
@@ -186,7 +217,7 @@ enum ScheduleService {
         if isIncome { cat = "Income" }
         else if category == Categorizer.uncategorized { cat = "Other" }
         else { cat = category }
-        var d = ScheduleDraft(name: displayName, amount: abs(amount), dueDay: min(max(day, 1), 28),
+        var d = ScheduleDraft(name: displayName, amount: abs(amount), dueDay: min(max(day, 1), 31),
                               category: cat, isIncome: isIncome)
         d.accountId = accountId
         return d
@@ -205,6 +236,7 @@ enum ScheduleService {
             s.fromAccountId = from; s.toAccountId = to
             s.frequencyRaw = d.frequency.rawValue; s.secondDay = d.secondDay; s.anchorDate = d.startDate
             s.accountId = d.isTransfer ? nil : d.accountId
+            s.endDate = d.endDate
         } else {
             let s = RecurringBill(name: d.name, amount: abs(d.amount), dueDay: d.dueDay, category: category,
                                   isActive: d.isActive, isIncome: d.isIncome && !d.isTransfer)
@@ -212,6 +244,7 @@ enum ScheduleService {
             s.frequencyRaw = d.frequency.rawValue; s.secondDay = d.secondDay; s.anchorDate = d.startDate
             s.trackedSince = Calendar.current.startOfDay(for: Date())
             s.accountId = d.isTransfer ? nil : d.accountId
+            s.endDate = d.endDate
             context.insert(s)
         }
         try? context.save()
@@ -314,6 +347,42 @@ enum ScheduleService {
         try? context.save()
     }
 
+    /// Make `newDate` the next due date. Payments before it are skipped; then the schedule is moved:
+    /// weekly / every-2-weeks repeat from it, monthly uses its day of the month (capped at the 28th),
+    /// twice-a-month swaps it in for whichever of its two days is due next.
+    @MainActor
+    static func setNextDue(_ bill: RecurringBill, to newDate: Date, today: Date = Date(),
+                           calendar: Calendar = .current, in context: ModelContext) {
+        let target = calendar.startOfDay(for: newDate)
+        // Earlier moves may have skipped upcoming payments; forget those so the date can move back too.
+        let todayStart = calendar.startOfDay(for: today)
+        var log = bill.occurrenceLog
+        for (k, status) in log where status == .skipped {
+            if let d = OccurrenceLog.date(fromKey: k, calendar: calendar), d >= todayStart { log[k] = nil }
+        }
+        // Picking a date means "this one is due": drop an entered/skipped mark sitting on exactly that day.
+        log[OccurrenceLog.key(target, calendar: calendar)] = nil
+        bill.occurrenceLogRaw = OccurrenceLog.serialize(log, calendar: calendar)
+        var guardCount = 0
+        while guardCount < 60, let next = bill.rule.nextDate(from: today, calendar: calendar), next < target {
+            bill.record(.skipped, on: next)
+            guardCount += 1
+        }
+        let day = min(calendar.component(.day, from: target), 31)
+        switch bill.rule.frequency {
+        case .weekly, .biweekly:
+            bill.anchorDate = target
+        case .monthly:
+            bill.dueDay = day
+        case .semimonthly:
+            // Replace the day that was due next (the first of the two if it can't be told).
+            let next = bill.rule.nextDate(from: today, calendar: calendar)
+            let nextDay = next.map { calendar.component(.day, from: $0) }
+            if nextDay == bill.secondDay { bill.secondDay = day } else { bill.dueDay = day }
+        }
+        try? context.save()
+    }
+
     /// Schedules in the order they come due: the next payment first, then the rest through the
     /// month, then the ones whose day has already passed (they roll over to next month).
     /// Paused schedules go last.
@@ -327,12 +396,12 @@ enum ScheduleService {
 
     /// Next date on or after `from` (start of day) that falls on `dueDay`.
     static func nextDueDate(dueDay: Int, from: Date, calendar: Calendar = .current) -> Date? {
-        let day = min(max(dueDay, 1), 28)
+        let wanted = min(max(dueDay, 1), 31)
         let today = calendar.startOfDay(for: from)
         for offset in 0..<2 {
             guard let monthDate = calendar.date(byAdding: .month, value: offset, to: today) else { continue }
             var comps = calendar.dateComponents([.year, .month], from: monthDate)
-            comps.day = day
+            comps.day = min(wanted, calendar.range(of: .day, in: .month, for: monthDate)?.count ?? 28)
             if let due = calendar.date(from: comps), due >= today { return due }
         }
         return nil
@@ -360,7 +429,9 @@ struct ScheduleItem: Equatable {
     var accountId: String? = nil
     /// The RecurringBill this was built from (nil in tests / ad-hoc items).
     var billId: UUID? = nil
-    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: anchor, excluded: excluded) }
+    /// Last day it can land on (nil = never ends).
+    var endDate: Date? = nil
+    var rule: ScheduleRule { ScheduleRule(frequency: frequency, dueDay: dueDay, secondDay: secondDay, anchor: anchor, excluded: excluded, end: endDate) }
     /// Average amount per month (signed), counting every repeat.
     var monthlyAmount: Double { amount * rule.monthlyFactor }
     var isIncome: Bool { !isTransfer && amount > 0 }
@@ -395,7 +466,7 @@ struct LedgerEntry {
 }
 
 enum CashCalendar {
-    static func clampedDay(_ d: Int) -> Int { min(max(d, 1), 28) }
+    static func clampedDay(_ d: Int) -> Int { min(max(d, 1), 31) }
 
     /// Month grid (whole weeks) with scheduled events on each day and a running balance.
     /// From today on, the balance starts at `balanceToday` and applies scheduled items.
@@ -508,14 +579,14 @@ extension RecurringBill {
         return ScheduleItem(name: name, amount: signedAmount, dueDay: dueDay, category: category,
                             isTransfer: isTransfer, fromAccountId: fromAccountId, toAccountId: toAccountId, detail: detail,
                             frequency: rule.frequency, secondDay: secondDay, anchor: anchorDate, excluded: rule.excluded,
-                            accountId: accountId, billId: id)
+                            accountId: accountId, billId: id, endDate: endDate)
     }
     var item: ScheduleItem { item() }
 
     var rule: ScheduleRule {
         ScheduleRule(frequency: ScheduleFrequency(rawValue: frequencyRaw) ?? .monthly,
                      dueDay: dueDay, secondDay: secondDay, anchor: anchorDate,
-                     excluded: Set(occurrenceLog.keys.compactMap { OccurrenceLog.date(fromKey: $0) }))
+                     excluded: Set(occurrenceLog.keys.compactMap { OccurrenceLog.date(fromKey: $0) }), end: endDate)
     }
 
     /// Dealt-with occurrences by day key ("yyyy-MM-dd").

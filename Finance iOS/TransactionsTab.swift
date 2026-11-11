@@ -33,7 +33,7 @@ struct TransactionsTab: View {
         effectiveAccount == nil ? transactions : transactions.filter { $0.accountId == effectiveAccount }
     }
     private var endingBalance: Double {
-        effectiveAccount == nil ? accounts.reduce(0) { $0 + $1.balance }
+        effectiveAccount == nil ? accounts.filter { !$0.type.isPropertyValue }.reduce(0) { $0 + $1.balance }
                                 : (accounts.first { $0.accountId == effectiveAccount }?.balance ?? 0)
     }
     private var runningBalances: [UUID: Double] {
@@ -52,6 +52,8 @@ struct TransactionsTab: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
+                        Image(systemName: t.isReconciled ? "checkmark.circle.fill" : "circle.dashed")
+                            .font(.caption).foregroundStyle(t.isReconciled ? Color.green : Color.secondary)
                         Text(t.name).lineLimit(1)
                         if ManualTransactionService.isManual(t) {
                             Text("manual").font(.caption2).foregroundStyle(.secondary)

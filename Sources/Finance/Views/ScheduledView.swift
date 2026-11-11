@@ -14,11 +14,18 @@ struct ScheduledView: View {
     @State private var entering: EntryTarget?
     @State private var note = ""
 
-    private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }.sorted { $0.name < $1.name } }
+    private var accountChoices: [AccountChoice] { accounts.map { AccountChoice(id: $0.accountId, name: $0.name, isCash: [.checking, .savings, .cash].contains($0.type)) }.sorted { $0.name < $1.name } }
     private var accountNames: [String: String] { Dictionary(accounts.map { ($0.accountId, $0.name) }, uniquingKeysWith: { a, _ in a }) }
     private func routeText(_ s: RecurringBill) -> String { s.item(accountNames: accountNames).detail ?? "Transfer" }
     private var categories: [String] { BudgetService.allCategories(stored: customCategories.map(\.name)) }
     private var monthlyIncome: Double { schedules.filter { $0.isActive && $0.isIncome }.reduce(0) { $0 + $1.monthlySize } }
+    /// Transfers out of checking/savings/cash into a card or loan (e.g. paying the credit card): real money leaving.
+    private var monthlyCardPayments: Double {
+        let cash = Set(accounts.filter { [.checking, .savings, .cash].contains($0.type) }.map(\.accountId))
+        return schedules.filter { s in
+            s.isActive && s.isTransfer && cash.contains(s.fromAccountId ?? "") && !cash.contains(s.toAccountId ?? "")
+        }.reduce(0) { $0 + $1.monthlySize }
+    }
     private var monthlyBills: Double { schedules.filter { $0.isActive && $0.isExpense }.reduce(0) { $0 + $1.monthlySize } }
 
     var body: some View {
@@ -26,7 +33,9 @@ struct ScheduledView: View {
             HStack(spacing: 24) {
                 total("Monthly income", monthlyIncome, .green)
                 total("Monthly bills", monthlyBills, .red)
-                total("Net", monthlyIncome - monthlyBills, monthlyIncome >= monthlyBills ? .green : .red)
+                if monthlyCardPayments > 0 { total("Card & loan payments", monthlyCardPayments, .red) }
+                total("Net", monthlyIncome - monthlyBills - monthlyCardPayments,
+                      monthlyIncome >= monthlyBills + monthlyCardPayments ? .green : .red)
                 Spacer()
             }
             .padding()
@@ -54,9 +63,10 @@ struct ScheduledView: View {
                     TableColumn("Repeats") { s in Text(s.rule.summary()) }.width(min: 130, ideal: 170)
                     TableColumn("Next due") { s in
                         if s.isActive, let d = s.rule.nextDate(from: Date()) {
-                            Text(d, format: .dateTime.month(.abbreviated).day().year())
-                        } else { Text("—").foregroundStyle(.secondary) }
-                    }.width(100)
+                            // Click the date to change it; picking a new one saves immediately.
+                            DueDateCell(date: d) { ScheduleService.setNextDue(s, to: $0, in: context) }
+                        } else { Text(s.isActive && s.endDate != nil ? "Ended" : "—").foregroundStyle(.secondary) }
+                    }.width(120)
                     TableColumn("Amount") { s in
                         Text(currency.string(from: NSNumber(value: s.signedAmount)) ?? "")
                             .monospacedDigit().foregroundStyle(s.isIncome ? .green : (s.isTransfer ? .blue : .primary))
@@ -82,10 +92,8 @@ struct ScheduledView: View {
                         Button("Delete…", role: .destructive) { pendingDelete = s }
                     }
                 } primaryAction: { ids in
-                    // Double-click: enter (or skip) the next payment. Edit the schedule from the right-click menu.
-                    if let s = schedule(for: ids) {
-                        if s.isActive { entering = EntryTarget(bill: s, date: nil) } else { editor = ScheduleEditor(existing: s, draft: draft(of: s)) }
-                    }
+                    // Double-click: adjust the schedule. Enter / skip the next payment from the right-click menu.
+                    if let s = schedule(for: ids) { editor = ScheduleEditor(existing: s, draft: draft(of: s)) }
                 }
             }
         }
@@ -114,7 +122,9 @@ struct ScheduledView: View {
             ScheduleEditorSheet(editor: ed, categories: categories, accounts: accountChoices) { result in
                 ScheduleEditor.save(result, existing: ed.existing, in: context)
                 editor = nil
-            } onCancel: { editor = nil }
+            } onCancel: { editor = nil } onNextDue: { date in
+                if let b = ed.existing { ScheduleService.setNextDue(b, to: date, in: context) }
+            }
         }
         .confirmationDialog("Delete “\(pendingDelete?.name ?? "")”?", isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
@@ -179,7 +189,7 @@ struct ScheduledView: View {
                       isActive: s.isActive, isTransfer: s.isTransfer,
                       fromAccountId: s.fromAccountId, toAccountId: s.toAccountId,
                       frequency: s.rule.frequency, secondDay: s.secondDay, startDate: s.anchorDate,
-                      accountId: s.accountId)
+                      accountId: s.accountId, endDate: s.endDate)
     }
 
     private func total(_ title: String, _ value: Double, _ color: Color) -> some View {
@@ -187,6 +197,35 @@ struct ScheduledView: View {
             Text(title).font(.caption).foregroundStyle(.secondary)
             Text(currency.string(from: NSNumber(value: value)) ?? "").font(.title3.bold()).monospacedDigit().foregroundStyle(color)
         }
+    }
+}
+
+/// A due date shown as MM/DD/YYYY (zero-padded); click it to pick another date.
+struct DueDateCell: View {
+    let date: Date
+    let onChange: (Date) -> Void
+    @State private var open = false
+    @State private var picked = Date()
+
+    var body: some View {
+        Button {
+            picked = date; open = true
+        } label: {
+            Text(date, format: .dateTime.month(.twoDigits).day(.twoDigits).year())
+                .monospacedDigit()
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            DatePicker("", selection: $picked, in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
+                .datePickerStyle(.graphical).labelsHidden().padding(10)
+                .onChange(of: picked) { _, new in
+                    if Calendar.current.startOfDay(for: new) != Calendar.current.startOfDay(for: date) {
+                        open = false
+                        onChange(new)
+                    }
+                }
+        }
+        .help("Click to change the next due date")
     }
 }
 
@@ -206,6 +245,8 @@ struct ScheduleEditor: Identifiable {
 struct AccountChoice: Identifiable, Hashable {
     let id: String      // OFX accountId
     let name: String
+    /// Checking, savings or cash: where paydays and bills normally belong.
+    var isCash: Bool = true
 }
 
 struct ScheduleEditorSheet: View {
@@ -214,7 +255,15 @@ struct ScheduleEditorSheet: View {
     let accounts: [AccountChoice]
     let onSave: (ScheduleDraft) -> Void
     let onCancel: () -> Void
+    /// Called after saving when the next due date was changed (existing schedules only).
+    var onNextDue: (Date) -> Void = { _ in }
 
+    @State private var nextDue = Date()
+    /// 0 = never ends, 1 = after a number of payments, 2 = on a date.
+    @State private var endMode = 0
+    @State private var paymentsText = "12"
+    @State private var endOn = Calendar.current.date(byAdding: .year, value: 1, to: Date()) ?? Date()
+    @State private var originalNextDue: Date?
     @State private var draft = ScheduleDraft(name: "", amount: 0, dueDay: 1, category: "Other", isIncome: false)
     @State private var amountText = ""
 
@@ -224,10 +273,18 @@ struct ScheduleEditorSheet: View {
     private var transferOK: Bool {
         !draft.isTransfer || (draft.fromAccountId != nil && draft.toAccountId != nil && draft.fromAccountId != draft.toAccountId)
     }
+    /// The date of the nth upcoming payment under the pattern being edited.
+    private func countedEnd(_ n: Int) -> Date? {
+        var rule = draft.rule
+        rule.end = nil
+        rule.excluded = editor.existing?.rule.excluded ?? []
+        return rule.nthDate(n, from: Date())
+    }
+    private var endOK: Bool { endMode != 1 || ((Int(paymentsText) ?? 0) >= 1 && countedEnd(Int(paymentsText) ?? 1) != nil) }
     private var accountOK: Bool { draft.isTransfer || accounts.isEmpty || draft.accountId != nil }
     private var canSave: Bool {
         !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && (parsedAmount ?? 0) > 0 && transferOK
-            && draft.scheduleIsValid && accountOK
+            && draft.scheduleIsValid && accountOK && endOK
     }
     private var startDateBinding: Binding<Date> {
         Binding(get: { draft.startDate ?? Date() }, set: { draft.startDate = $0 })
@@ -255,20 +312,34 @@ struct ScheduleEditorSheet: View {
                 switch draft.frequency {
                 case .monthly:
                     Picker(draft.isIncome ? "Payday" : (draft.isTransfer ? "Day" : "Due day"), selection: $draft.dueDay) {
-                        ForEach(1...28, id: \.self) { Text(ordinal($0)).tag($0) }
+                        ForEach(1...31, id: \.self) { Text(ordinal($0)).tag($0) }
                     }
                 case .semimonthly:
                     Picker("First day", selection: $draft.dueDay) {
-                        ForEach(1...28, id: \.self) { Text(ordinal($0)).tag($0) }
+                        ForEach(1...31, id: \.self) { Text(ordinal($0)).tag($0) }
                     }
                     Picker("Second day", selection: $draft.secondDay) {
-                        ForEach(1...28, id: \.self) { Text(ordinal($0)).tag($0) }
+                        ForEach(1...31, id: \.self) { Text(ordinal($0)).tag($0) }
                     }
                     if !draft.scheduleIsValid { Text("Pick two different days.").font(.caption).foregroundStyle(.red) }
                 case .weekly, .biweekly:
                     DatePicker(draft.isIncome ? "A payday" : "A date it lands on", selection: startDateBinding, displayedComponents: .date)
                     Text("Repeats \(draft.frequency == .weekly ? "every week" : "every 2 weeks") from this date: \(draft.rule.summary()).")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+                Picker("Ends", selection: $endMode) {
+                    Text("Never").tag(0)
+                    Text("After a number of payments").tag(1)
+                    Text("On a date").tag(2)
+                }
+                if endMode == 1 {
+                    TextField("Number of payments", text: $paymentsText)
+                    if let n = Int(paymentsText), n >= 1, let last = countedEnd(n) {
+                        Text("The last one lands on \(last.formatted(.dateTime.month(.abbreviated).day().year())).")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } else if endMode == 2 {
+                    DatePicker("Last day", selection: $endOn, displayedComponents: .date)
                 }
                 if draft.isTransfer {
                     Picker("From account", selection: $draft.fromAccountId) {
@@ -296,11 +367,17 @@ struct ScheduleEditorSheet: View {
                         ForEach(accounts) { Text($0.name).tag(Optional($0.id)) }
                     }
                 }
+                if editor.existing != nil, let original = originalNextDue {
+                    DatePicker("Next due", selection: $nextDue, in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
+                    if Calendar.current.startOfDay(for: nextDue) != original {
+                        Text("Payments before this date will be skipped. Nothing is booked.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Active", isOn: $draft.isActive)
             }
             .formStyle(.grouped)
             Text(draft.isTransfer ? "Moves money between two of your accounts. It doesn't count as income or spending, and it shows on the calendar."
-                                     : "Days of the month are capped at the 28th so every month has one.")
+                                     : "Days past the end of a short month (29th–31st) land on that month's last day.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
@@ -310,10 +387,16 @@ struct ScheduleEditorSheet: View {
                     if d.frequency == .weekly || d.frequency == .biweekly { d.startDate = d.startDate ?? Date() }
                     else { d.startDate = nil }
                     d.name = d.name.trimmingCharacters(in: .whitespaces)
+                    switch endMode {
+                    case 1: d.endDate = Int(paymentsText).flatMap { countedEnd($0) }
+                    case 2: d.endDate = Calendar.current.startOfDay(for: endOn)
+                    default: d.endDate = nil
+                    }
                     if d.isTransfer { d.category = Categorizer.transfer; d.isIncome = false }
                     else if d.isIncome { d.category = "Income" }
                     else if d.category == "Income" || d.category == Categorizer.transfer { d.category = "Other" }
                     onSave(d)
+                    if let original = originalNextDue, Calendar.current.startOfDay(for: nextDue) != original { onNextDue(nextDue) }
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
@@ -324,9 +407,11 @@ struct ScheduleEditorSheet: View {
         .frame(width: 420)
         .onAppear {
             draft = editor.draft
+            if let e = editor.draft.endDate { endMode = 2; endOn = e }
+            if let b = editor.existing, b.isActive, let d = b.rule.nextDate(from: Date()) { nextDue = d; originalNextDue = d }
             if draft.accountId == nil && !draft.isTransfer {
-                // Default to a checking-type account the first time (accounts are listed by name).
-                draft.accountId = accounts.first?.id
+                // Default to a checking/savings account the first time (never a card just because it sorts first).
+                draft.accountId = (accounts.first { $0.isCash } ?? accounts.first)?.id
             }
             amountText = editor.draft.amount > 0 ? String(format: "%.2f", editor.draft.amount) : ""
         }
@@ -400,7 +485,7 @@ struct EnterScheduledSheet: View {
                 }
             }
             .formStyle(.grouped)
-            Text("Enter adds a real transaction and updates the account balance; change the date or amount if this one differs. Skip leaves this payment out and moves to the next one. Importing your bank file later replaces an entered transaction that matches.")
+            Text("Enter adds a real transaction and updates the account balance; change the date or amount if this one differs. Save Date Only just moves the due date and books nothing. Skip leaves this payment out and moves to the next one. Importing your bank file later replaces an entered transaction that matches.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button("Skip This One") {
@@ -409,6 +494,13 @@ struct EnterScheduledSheet: View {
                 }.disabled(occurrence == nil)
                 Spacer()
                 Button("Cancel") { onDone(nil) }.keyboardShortcut(.cancelAction)
+                Button("Save Date Only") {
+                    ScheduleService.setNextDue(bill, to: postedOn, in: context)
+                    onDone("\(bill.name) is now next due \(postedOn.formatted(.dateTime.month(.twoDigits).day(.twoDigits).year())). Nothing was booked.")
+                }
+                .help("Change when this is next due without adding a transaction")
+                .disabled(occurrenceOverride != nil || occurrence == nil
+                          || Calendar.current.startOfDay(for: postedOn) == Calendar.current.startOfDay(for: occurrence ?? postedOn))
                 Button("Enter Transaction") {
                     guard let due = occurrence, let amt = amount else { return }
                     let ok = ScheduleService.enter(bill, occurrence: due, postedOn: postedOn, amount: amt,

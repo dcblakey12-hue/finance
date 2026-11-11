@@ -104,6 +104,18 @@ struct ScheduleForm: View {
     @Environment(\.modelContext) private var context
     @State private var draft = ScheduleDraft(name: "", amount: 0, dueDay: 1, category: "Other", isIncome: false)
     @State private var amountText = ""
+    /// 0 = never ends, 1 = after a number of payments, 2 = on a date.
+    @State private var endMode = 0
+    @State private var paymentsText = "12"
+    @State private var endOn = Calendar.current.date(byAdding: .year, value: 1, to: Date()) ?? Date()
+
+    /// The date of the nth upcoming payment under the pattern being edited.
+    private func countedEnd(_ n: Int) -> Date? {
+        var rule = draft.rule
+        rule.end = nil
+        rule.excluded = existing?.rule.excluded ?? []
+        return rule.nthDate(n, from: Date())
+    }
 
     private var kind: Binding<Int> {
         Binding(get: { draft.isTransfer ? 2 : (draft.isIncome ? 1 : 0) },
@@ -114,6 +126,7 @@ struct ScheduleForm: View {
         !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && amount > 0 &&
         (!draft.isTransfer || (draft.fromAccountId != nil && draft.toAccountId != nil && draft.fromAccountId != draft.toAccountId)) &&
         draft.scheduleIsValid &&
+        (endMode != 1 || ((Int(paymentsText) ?? 0) >= 1 && countedEnd(Int(paymentsText) ?? 1) != nil)) &&
         (draft.isTransfer || accounts.isEmpty || draft.accountId != nil)
     }
     private var startDateBinding: Binding<Date> {
@@ -134,18 +147,32 @@ struct ScheduleForm: View {
                 switch draft.frequency {
                 case .monthly:
                     Picker("Day of month", selection: $draft.dueDay) {
-                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                        ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
                     }
                 case .semimonthly:
                     Picker("First day", selection: $draft.dueDay) {
-                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                        ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
                     }
                     Picker("Second day", selection: $draft.secondDay) {
-                        ForEach(1...28, id: \.self) { Text("\($0)").tag($0) }
+                        ForEach(1...31, id: \.self) { Text("\($0)").tag($0) }
                     }
                 case .weekly, .biweekly:
                     DatePicker("A date it lands on", selection: startDateBinding, displayedComponents: .date)
                     Text(draft.rule.summary()).font(.caption).foregroundStyle(.secondary)
+                }
+                Picker("Ends", selection: $endMode) {
+                    Text("Never").tag(0)
+                    Text("After a number of payments").tag(1)
+                    Text("On a date").tag(2)
+                }
+                if endMode == 1 {
+                    TextField("Number of payments", text: $paymentsText).keyboardType(.numberPad)
+                    if let n = Int(paymentsText), n >= 1, let last = countedEnd(n) {
+                        Text("The last one lands on \(last.formatted(.dateTime.month(.abbreviated).day().year())).")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } else if endMode == 2 {
+                    DatePicker("Last day", selection: $endOn, displayedComponents: .date)
                 }
                 if draft.isTransfer {
                     Picker("From", selection: $draft.fromAccountId) {
@@ -180,6 +207,11 @@ struct ScheduleForm: View {
                         if d.frequency == .weekly || d.frequency == .biweekly { d.startDate = d.startDate ?? Date() }
                         else { d.startDate = nil }
                         d.name = d.name.trimmingCharacters(in: .whitespaces)
+                        switch endMode {
+                        case 1: d.endDate = Int(paymentsText).flatMap { countedEnd($0) }
+                        case 2: d.endDate = Calendar.current.startOfDay(for: endOn)
+                        default: d.endDate = nil
+                        }
                         if d.isTransfer { d.isIncome = false }
                         else if d.category == "Income" || d.category == Categorizer.transfer { d.category = "Other" }
                         ScheduleService.save(d, existing: existing, in: context)
@@ -194,10 +226,14 @@ struct ScheduleForm: View {
                                       isIncome: s.isIncome, isActive: s.isActive, isTransfer: s.isTransfer,
                                       fromAccountId: s.fromAccountId, toAccountId: s.toAccountId,
                                       frequency: s.rule.frequency, secondDay: s.secondDay, startDate: s.anchorDate,
-                                      accountId: s.accountId)
+                                      accountId: s.accountId, endDate: s.endDate)
                 amountText = String(format: "%.2f", abs(s.amount))
+                if let e = s.endDate { endMode = 2; endOn = e }
             }
-            if draft.accountId == nil && !draft.isTransfer { draft.accountId = accounts.first?.accountId }
+            if draft.accountId == nil && !draft.isTransfer {
+                // A checking/savings account, not whichever card sorts first.
+                draft.accountId = (accounts.first { [.checking, .savings, .cash].contains($0.type) } ?? accounts.first)?.accountId
+            }
         }
     }
 }

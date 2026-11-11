@@ -38,7 +38,7 @@ struct TransactionsView: View {
     /// Current balance the newest transaction should end at: the selected
     /// account's balance, or all accounts combined.
     private var endingBalance: Double {
-        filters.accountId == nil ? accounts.reduce(0) { $0 + $1.balance }
+        filters.accountId == nil ? accounts.filter { !$0.type.isPropertyValue }.reduce(0) { $0 + $1.balance }
                              : (accounts.first { $0.accountId == filters.accountId }?.balance ?? 0)
     }
     private var balances: [UUID: Double] {
@@ -113,6 +113,11 @@ struct TransactionsView: View {
             }
             List(rows, selection: $selection) { tx in
                 HStack {
+                    Image(systemName: tx.isReconciled ? "checkmark.circle.fill" : "circle.dashed")
+                        .foregroundStyle(tx.isReconciled ? Color.green : Color.secondary)
+                        .frame(width: 20)
+                        .help(tx.isReconciled ? "Reconciled: confirmed by a bank sync or file import"
+                                              : "Not reconciled yet: entered by hand, waiting for the bank to report it")
                     Text(tx.date, format: .dateTime.month(.abbreviated).day().year())
                         .monospacedDigit()
                         .frame(width: 100, alignment: .leading)
@@ -233,7 +238,7 @@ struct TransactionsView: View {
         }
         .sheet(item: $scheduleEditor) { ed in
             ScheduleEditorSheet(editor: ed, categories: BudgetService.allCategories(stored: customCategories.map(\.name)),
-                                accounts: accounts.map { AccountChoice(id: $0.accountId, name: $0.name) }) { draft in
+                                accounts: accounts.map { AccountChoice(id: $0.accountId, name: $0.name, isCash: [.checking, .savings, .cash].contains($0.type)) }) { draft in
                 ScheduleEditor.save(draft, existing: nil, in: context)
                 scheduleEditor = nil
                 status = "Scheduled \(draft.name): \(draft.rule.summary()). See Scheduled Transactions."
