@@ -75,7 +75,7 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 sync.syncIfStale(in: context)
-                cloud.checkNow(context: context, nudge: false)   // the system imports on activation; show it
+                if !DemoMode.isOn { cloud.checkNow(context: context, nudge: false) }   // the system imports on activation; show it (demo store has no CloudKit)
             }
         }
         .toolbar {
