@@ -13,7 +13,9 @@ struct SettingsView: View {
         Form {
             if DemoMode.isOn {
                 Section("Demo mode") {
-                    Text("You're looking at made-up data for showing the app. It lives only in memory, is never sent to iCloud, your banks or your calendar, and is thrown away when Finance quits. Your own data is untouched.")
+                    Text(DemoMode.isShared
+                         ? "You're looking at made-up data for showing the app. It has its own file and its own iCloud space, separate from your real data, so your iPhone can show the same demo (on the phone: Overview ▸ ••• ▸ Show Demo Data). It never goes to your banks or your calendar, and a fresh copy is made each time you start the demo. Your own data is untouched."
+                         : "You're looking at made-up data for showing the app. It has its own file on this Mac, never goes to iCloud, your banks or your calendar, and a fresh copy is made each time you start the demo. Your own data is untouched.")
                         .font(.caption).foregroundStyle(.secondary)
                     Button("Leave Demo Mode…") { DemoMode.confirmAndSwitch() }
                 }

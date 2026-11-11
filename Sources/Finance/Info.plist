@@ -22,6 +22,8 @@
 	<string>1</string>
 	<key>FinanceCloudContainer</key>
 	<string>iCloud.com.blakey.finance</string>
+	<key>FinanceDemoCloudContainer</key>
+	<string>iCloud.com.blakey.finance.demo</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSApplicationCategoryType</key>

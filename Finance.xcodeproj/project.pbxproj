@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		D3E0DA7A0000000000000002 /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E0DA7A0000000000000001 /* DemoData.swift */; };
+		D3E0DA7A0000000000000005 /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E0DA7A0000000000000001 /* DemoData.swift */; };
 		D3E0DA7A0000000000000004 /* DemoDataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3E0DA7A0000000000000003 /* DemoDataTests.swift */; };
 		7A1C0E5B2D3F4A6B8C9D0E11 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 495923EF309FDD1F009B93EA /* Assets.xcassets */; };
 		08AAD6BA28CF0019FCE6BF3D /* ScheduleAndCategoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C68FA07408923BA45C57D27 /* ScheduleAndCategoryTests.swift */; };
@@ -355,6 +356,7 @@
 				495923EC309EE96B009B93EA /* Services.swift in Sources */,
 				495923E8309EE940009B93EA /* Models.swift in Sources */,
 				495923EA309EE95D009B93EA /* ScheduleService.swift in Sources */,
+				D3E0DA7A0000000000000005 /* DemoData.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

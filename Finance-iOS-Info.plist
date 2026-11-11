@@ -4,6 +4,8 @@
 <dict>
 	<key>FinanceCloudContainer</key>
 	<string>iCloud.com.blakey.finance</string>
+	<key>FinanceDemoCloudContainer</key>
+	<string>iCloud.com.blakey.finance.demo</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

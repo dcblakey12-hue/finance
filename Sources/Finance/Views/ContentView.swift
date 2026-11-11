@@ -66,7 +66,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .task {
-            DemoMode.loadIfEmpty(in: context)
+            DemoMode.prepare(in: context)
             CategoryService.seedIfNeeded(in: context)
             DedupeService.run(in: context)
             ScheduleService.ensureTracking(in: context)
@@ -75,7 +75,7 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 sync.syncIfStale(in: context)
-                if !DemoMode.isOn { cloud.checkNow(context: context, nudge: false) }   // the system imports on activation; show it (demo store has no CloudKit)
+                if !DemoMode.isOn || DemoMode.isShared { cloud.checkNow(context: context, nudge: false) }   // the system imports on activation; show it
             }
         }
         .toolbar {
@@ -87,8 +87,11 @@ struct ContentView: View {
                                 .background(Capsule().fill(Color.orange.opacity(0.85))).foregroundStyle(.white)
                         }
                         .buttonStyle(.plain)
-                        .help("Made-up data for showing the app. Not saved and never sent to iCloud. Click to go back to your own data.")
-                    } else {
+                        .help(DemoMode.isShared
+                              ? "Made-up data for showing the app, shared with your iPhone through a separate demo iCloud space. Your own data isn't touched. Click to go back to it."
+                              : "Made-up data for showing the app, kept on this Mac. Your own data isn't touched. Click to go back to it.")
+                    }
+                    if !DemoMode.isOn || DemoMode.isShared {
                     Button { cloud.checkNow(context: context) } label: {
                         Image(systemName: cloud.symbol(receiving: cloud.checking))
                             .foregroundStyle(cloud.hasProblem ? Color.orange : (cloud.checking ? Color.accentColor : Color.secondary))

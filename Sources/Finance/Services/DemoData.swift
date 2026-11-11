@@ -1,20 +1,33 @@
 import Foundation
 import SwiftData
+#if os(macOS)
 import AppKit
+#endif
 
 // MARK: - Demo mode
 
 /// Demo mode shows a made-up household so the app can be shown to people without your data.
 ///
-/// It runs as its own copy of the app (launched with `-FinanceDemo`), and in that copy:
-/// - data lives in memory only (a fresh demo every launch) and is never sent to iCloud,
-/// - your settings are swapped for a throwaway set, so nothing you change in the demo sticks,
-/// - Plaid bank connections are hidden and never synced, and Apple Calendar is left alone.
-/// Your real data file is not opened at all.
+/// Your real data is never opened for writing in demo mode. The demo has its own data file
+/// ("Finance Demo/Demo.store") and, when Info.plist's `FinanceDemoCloudContainer` names one, its own
+/// iCloud container. That container is separate from the one that holds your real data, so the
+/// Mac and the iPhone can share the demo (changes on one show on the other) without either app
+/// writing a single made-up record next to your own. Leaving demo mode just switches back to your
+/// real file; nothing is copied, merged or deleted there.
+///
+/// On the Mac the demo runs as its own copy of the app (launched with `-FinanceDemo`); your settings
+/// are swapped for a throwaway set, Plaid bank connections are hidden and never synced, and Apple
+/// Calendar is left alone. On the iPhone a switch saved on the phone picks which data file to show.
 enum DemoMode {
+    #if os(macOS)
     static let argument = "-FinanceDemo"
     static let isOn: Bool = ProcessInfo.processInfo.arguments.contains(argument)
         || ProcessInfo.processInfo.environment["FINANCE_DEMO"] == "1"
+    #else
+    /// The phone's demo switch (in the standard settings, never the demo's throwaway ones).
+    static let flagKey = "demoMode"
+    static var isOn: Bool { UserDefaults.standard.bool(forKey: flagKey) }
+    #endif
 
     private static let suiteName = "com.blakey.Finance.demo-settings"
     /// Settings used while showing the demo, in place of your own.
@@ -22,31 +35,75 @@ enum DemoMode {
     /// Start each demo with default settings.
     static func resetSettings() { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
 
-    /// In-memory store with iCloud explicitly off.
+    /// The iCloud container for demo data only, or nil to keep the demo on this device.
+    /// It is refused if it is missing or is the same as the container that holds your real data.
+    static var cloudID: String? {
+        func info(_ key: String) -> String {
+            ((Bundle.main.object(forInfoDictionaryKey: key) as? String) ?? "").trimmingCharacters(in: .whitespaces)
+        }
+        return safeCloudID(demo: info("FinanceDemoCloudContainer"), real: info("FinanceCloudContainer"))
+    }
+    static func safeCloudID(demo: String, real: String) -> String? {
+        guard !demo.isEmpty, demo.caseInsensitiveCompare(real) != .orderedSame else { return nil }
+        return demo
+    }
+    /// True when the demo is shared between your Mac and iPhone through iCloud.
+    static var isShared: Bool { cloudID != nil }
+
+    /// The demo's own data file, apart from your real one.
+    static var storeURL: URL {
+        URL.applicationSupportDirectory
+            .appending(path: "Finance Demo", directoryHint: .isDirectory)
+            .appending(path: "Demo.store")
+    }
+
+    /// The demo's container: its own file, and its own iCloud container or none.
+    /// `cloudKitDatabase` is always spelled out: `.automatic` would pick the first container in the
+    /// entitlements, which is the one with your real data.
     static func makeContainer(schema: Schema) throws -> ModelContainer {
-        let config = ModelConfiguration("FinanceDemo", schema: schema, isStoredInMemoryOnly: true,
-                                        cloudKitDatabase: .none)
+        try? FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let config = ModelConfiguration("FinanceDemo", schema: schema, url: storeURL,
+                                        cloudKitDatabase: cloudID.map { .private($0) } ?? .none)
         return try ModelContainer(for: schema, configurations: [config])
     }
 
-    /// Fill the empty demo store with the made-up household.
+    @MainActor private static var prepared = false
+
+    /// Put the made-up household in the demo file.
+    ///
+    /// The Mac starts every demo with a fresh copy (dated around today) and shares it with the phone.
+    /// The phone only fills the demo itself when it isn't shared; when it is, it waits for the Mac's copy,
+    /// so the two never add the household twice.
     @MainActor
-    static func loadIfEmpty(in context: ModelContext) {
-        guard isOn, ((try? context.fetchCount(FetchDescriptor<Account>())) ?? 0) == 0 else { return }
+    static func prepare(in context: ModelContext) {
+        guard isOn else { return }
+        #if os(macOS)
+        guard !prepared else { return }   // once per demo launch, not each time a window opens
+        prepared = true
         BackupService.restore(DemoData.make(), in: context)
+        #else
+        guard !isShared, ((try? context.fetchCount(FetchDescriptor<Account>())) ?? 0) == 0 else { return }
+        BackupService.restore(DemoData.make(), in: context)
+        #endif
     }
 
+    #if os(macOS)
     /// Ask, then reopen the app in (or out of) demo mode.
     @MainActor
     static func confirmAndSwitch() {
         let alert = NSAlert()
         if isOn {
             alert.messageText = "Leave the demo?"
-            alert.informativeText = "Finance will reopen with your own data. Nothing from the demo is kept."
+            alert.informativeText = "Finance will reopen with your own data. Nothing from the demo is added to it."
+                + (isShared ? " If your iPhone is showing the demo, tap Leave on its orange Demo bar to go back there too." : "")
             alert.addButton(withTitle: "Leave Demo")
         } else {
             alert.messageText = "Show demo data?"
-            alert.informativeText = "Finance will reopen with a made-up household (accounts, transactions, budget and bills) that you can show to people. Your own data is not opened or changed, and nothing from the demo goes to iCloud, your banks or your calendar. Choose File ▸ Leave Demo Mode to come back."
+            alert.informativeText = "Finance will reopen with a made-up household (accounts, transactions, budget and bills) that you can show to people. Your own data is not changed, and nothing from the demo goes to your banks or your calendar."
+                + (isShared
+                   ? " The demo has its own iCloud space, apart from your real data. To show it on your iPhone too, open Finance there and choose ••• ▸ Show Demo Data on the Overview tab."
+                   : " The demo stays on this Mac.")
+                + " Choose File ▸ Leave Demo Mode to come back."
             alert.addButton(withTitle: "Show Demo")
         }
         alert.addButton(withTitle: "Cancel")
@@ -78,6 +135,7 @@ enum DemoMode {
             if (try? p.run()) != nil { NSApp.terminate(nil) }
         }
     }
+    #endif
 }
 
 // MARK: - Demo data

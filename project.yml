@@ -50,6 +50,7 @@ targets:
         NSPrincipalClass: NSApplication
         LSApplicationCategoryType: public.app-category.finance
         FinanceCloudContainer: iCloud.com.blakey.finance   # empty = no iCloud sync
+        FinanceDemoCloudContainer: iCloud.com.blakey.finance.demo   # demo data only; empty = demo stays on each device
         ITSAppUsesNonExemptEncryption: false
         NSSupportsAutomaticGraphicsSwitching: true
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
@@ -61,7 +62,7 @@ targets:
         com.apple.security.personal-information.calendars: true
         com.apple.developer.aps-environment: development
         com.apple.developer.icloud-services: [CloudKit]
-        com.apple.developer.icloud-container-identifiers: [iCloud.com.blakey.finance]
+        com.apple.developer.icloud-container-identifiers: [iCloud.com.blakey.finance, iCloud.com.blakey.finance.demo]
         keychain-access-groups: []
 
   FinanceTests:

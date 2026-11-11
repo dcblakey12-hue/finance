@@ -17,6 +17,8 @@ struct OverviewTab: View {
     /// Your card order, saved on this phone (comma separated OverviewCard names).
     @AppStorage("overviewCardOrder") private var cardOrderRaw = ""
     @State private var reorderingCards = false
+    @AppStorage(DemoMode.flagKey, store: .standard) private var demo = false
+    @State private var confirmingDemo = false
     private var cardOrder: [OverviewCard] {
         let saved = cardOrderRaw.split(separator: ",").compactMap { OverviewCard(rawValue: String($0)) }
         var seen = Set<OverviewCard>(), out: [OverviewCard] = []
@@ -207,9 +209,19 @@ struct OverviewTab: View {
                         Divider()
                         Button("Reorder Cards…") { reorderingCards = true }
                         Button("Reorder Tabs…", action: onReorderTabs)
+                        Divider()
+                        Button(demo ? "Leave Demo Mode…" : "Show Demo Data…", systemImage: "theatermasks") { confirmingDemo = true }
                     } label: { Image(systemName: "ellipsis.circle") }
-                    .disabled(allAccounts.isEmpty)
                 }
+            }
+            .confirmationDialog(demo ? "Leave the demo?" : "Show demo data?", isPresented: $confirmingDemo, titleVisibility: .visible) {
+                Button(demo ? "Leave Demo" : "Show Demo") { demo.toggle() }
+            } message: {
+                Text(demo
+                     ? "Finance will go back to your own data. Nothing from the demo is added to it."
+                     : DemoMode.isShared
+                        ? "Finance will show a made-up household instead of your own. The demo has its own iCloud space, so your real data isn't touched. Turn on demo mode on your Mac too (File ▸ Show Demo Data…) and both will show the same demo. Tap Leave on the orange bar to come back."
+                        : "Finance will show a made-up household instead of your own. Your real data isn't touched. Tap Leave on the orange bar to come back.")
             }
         }
     }

@@ -7,6 +7,22 @@ final class DemoDataTests: XCTestCase {
     private let cal = Calendar.current
     private var today: Date { cal.date(from: DateComponents(year: 2026, month: 11, day: 11))! }
 
+    /// The demo must never be pointed at the iCloud container that holds real data.
+    func testDemoRefusesTheRealICloudContainer() {
+        XCTAssertEqual(DemoMode.safeCloudID(demo: "iCloud.com.blakey.finance.demo", real: "iCloud.com.blakey.finance"),
+                       "iCloud.com.blakey.finance.demo")
+        XCTAssertNil(DemoMode.safeCloudID(demo: "iCloud.com.blakey.finance", real: "iCloud.com.blakey.finance"))
+        XCTAssertNil(DemoMode.safeCloudID(demo: "iCloud.com.Blakey.Finance", real: "iCloud.com.blakey.finance"))
+        XCTAssertNil(DemoMode.safeCloudID(demo: "", real: "iCloud.com.blakey.finance"))
+    }
+
+    /// The demo's file is its own, never SwiftData's default store where real data lives.
+    func testDemoUsesItsOwnFile() {
+        XCTAssertEqual(DemoMode.storeURL.lastPathComponent, "Demo.store")
+        XCTAssertEqual(DemoMode.storeURL.deletingLastPathComponent().lastPathComponent, "Finance Demo")
+        XCTAssertNotEqual(DemoMode.storeURL, URL.applicationSupportDirectory.appending(path: "default.store"))
+    }
+
     func testDemoHasEveryKindOfAccountAndMonthsOfHistory() {
         let file = DemoData.make(today: today, calendar: cal)
         XCTAssertEqual(Set(file.accounts.map(\.typeRaw)), Set(AccountType.allCases.map(\.rawValue)))

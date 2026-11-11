@@ -29,7 +29,7 @@ struct FinanceApp: App {
             CategoryRule.self,
             CustomCategory.self,
         ])
-        // Demo mode: made-up data in memory only, never synced (see DemoMode).
+        // Demo mode: made-up data in its own file and its own iCloud container; your real store is not opened (see DemoMode).
         if DemoMode.isOn {
             do { return try DemoMode.makeContainer(schema: schema) }
             catch { fatalError("Could not create the demo ModelContainer: \(error)") }
