@@ -13,6 +13,7 @@ struct OverviewTab: View {
     @AppStorage("overview.accountIds") private var accountIdsRaw = ""
     @State private var pickedDay: Date?
     @StateObject private var cloud = CloudSyncMonitor()
+    @Environment(\.modelContext) private var context
     /// Your card order, saved on this phone (comma separated OverviewCard names).
     @AppStorage("overviewCardOrder") private var cardOrderRaw = ""
     @State private var reorderingCards = false
@@ -180,9 +181,12 @@ struct OverviewTab: View {
                         }
                         case .cloud:
                         card("iCloud sync") {
-                            Label(cloud.summary, systemImage: cloud.hasProblem ? "exclamationmark.icloud" : (cloud.working ? "icloud.and.arrow.down" : "icloud"))
-                                .font(.caption).foregroundStyle(cloud.hasProblem ? Color.orange : Color.secondary)
-                            Text("Both devices must use the same Apple ID with iCloud on. Open the Mac app after a Plaid sync, and give the phone a moment with the app open.")
+                            Button { cloud.checkNow(context: context) } label: {
+                                Label(cloud.summary, systemImage: cloud.symbol(receiving: true))
+                                    .font(.caption).foregroundStyle(cloud.hasProblem ? Color.orange : Color.secondary)
+                                    .symbolEffect(.pulse, isActive: cloud.checking || cloud.working)
+                            }.buttonStyle(.plain)
+                            Text("Both devices must use the same Apple ID with iCloud on. Open the Mac app after a Plaid sync, and give the phone a moment with the app open. Tap the line above to check now.")
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
                         }

@@ -72,14 +72,21 @@ struct ContentView: View {
             sync.syncIfStale(in: context)      // sync automatically when the app opens
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { sync.syncIfStale(in: context) }
+            if phase == .active {
+                sync.syncIfStale(in: context)
+                cloud.checkNow(context: context, nudge: false)   // the system imports on activation; show it
+            }
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 8) {
-                    Image(systemName: cloud.hasProblem ? "exclamationmark.icloud" : (cloud.working ? "icloud.and.arrow.up" : "icloud"))
-                        .foregroundStyle(cloud.hasProblem ? Color.orange : Color.secondary)
-                        .help(cloud.summary)
+                    Button { cloud.checkNow(context: context) } label: {
+                        Image(systemName: cloud.symbol(receiving: cloud.checking))
+                            .foregroundStyle(cloud.hasProblem ? Color.orange : (cloud.checking ? Color.accentColor : Color.secondary))
+                            .symbolEffect(.pulse, isActive: cloud.checking || cloud.working)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(cloud.summary + " Click to check iCloud for changes now.")
                     if sync.busy { ProgressView().controlSize(.small) }
                     else if !sync.status.isEmpty {
                         Text(sync.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 360)

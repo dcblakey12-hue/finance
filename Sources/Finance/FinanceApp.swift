@@ -12,6 +12,9 @@ struct FinanceApp: App {
         Task { @MainActor in
             NSApplication.shared.setActivationPolicy(.regular)
             NSApplication.shared.activate(ignoringOtherApps: true)
+            // CloudKit tells the Mac about changes from the iPhone with a silent push. Without
+            // registering, the Mac only picks them up at launch or when it's brought to the front.
+            NSApplication.shared.registerForRemoteNotifications()
         }
     }
 

@@ -3,6 +3,11 @@ import SwiftData
 import EventKit
 import CoreData
 import Combine
+#if os(macOS)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - Import
 
@@ -537,13 +542,20 @@ enum BackupService {
 
 // MARK: - iCloud sync status
 
-/// Watches SwiftData's CloudKit sync so the apps can show when changes last went up / came down.
+/// Watches SwiftData's CloudKit sync so the apps can show when changes last went up / came down,
+/// and lets the person ask for an immediate check for changes made on another device.
 @MainActor
 final class CloudSyncMonitor: ObservableObject {
     @Published var lastExport: Date?      // this device sent changes to iCloud
     @Published var lastImport: Date?      // this device received changes from iCloud
     @Published var lastError: String?
     @Published var working = false
+    /// True from a "check now" (or the app coming to the front) until iCloud reports an import, or a timeout.
+    @Published private(set) var checking = false
+    /// Result of the last check, shown in the tooltip.
+    @Published private(set) var checkNote: String?
+    private var checkStarted: Date?
+    private var timeout: Task<Void, Never>?
     private var token: NSObjectProtocol?
 
     init() {
@@ -571,7 +583,48 @@ final class CloudSyncMonitor: ObservableObject {
         } else if let error {
             lastError = error
         }
+        if type == .import, checking { finishCheck(note: ok ? "Checked iCloud at \(Self.clock(end))." : nil) }
     }
+
+    /// Ask iCloud for changes now (e.g. a transaction added on the iPhone).
+    ///
+    /// SwiftData has no public "sync now" call. NSPersistentCloudKitContainer imports when the app
+    /// launches, when it's activated, and when CloudKit pushes a change. So this:
+    /// 1. saves any pending edits here, which starts an export;
+    /// 2. (re)registers for CloudKit's push notifications, so later changes arrive on their own;
+    /// 3. if `nudge` is set, re-sends the app-activated notification, which schedules an import.
+    /// The icon shows a syncing state until iCloud reports that import, or 20 seconds pass.
+    /// Without `nudge` (the app just came to the front) it only shows that state, because the
+    /// system schedules the activation import itself.
+    func checkNow(context: ModelContext?, nudge: Bool = true) {
+        guard !checking else { return }
+        if let context, context.hasChanges { try? context.save() }
+        checking = true
+        checkNote = nil
+        checkStarted = Date()
+        #if os(macOS)
+        NSApplication.shared.registerForRemoteNotifications()
+        if nudge { NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApplication.shared) }
+        #elseif canImport(UIKit)
+        UIApplication.shared.registerForRemoteNotifications()
+        if nudge { NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: UIApplication.shared) }
+        #endif
+        timeout?.cancel()
+        timeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled, let self, self.checking else { return }
+            self.finishCheck(note: "iCloud hasn't answered yet (asked \(Self.clock(self.checkStarted ?? Date()))). "
+                             + "If a change from your other device is still missing, quit and reopen Finance.")
+        }
+    }
+
+    private func finishCheck(note: String?) {
+        checking = false
+        checkNote = note
+        timeout?.cancel(); timeout = nil
+    }
+
+    private static func clock(_ d: Date) -> String { d.formatted(date: .omitted, time: .shortened) }
 
     private func ago(_ d: Date?) -> String {
         guard let d else { return "not yet this session" }
@@ -580,7 +633,16 @@ final class CloudSyncMonitor: ObservableObject {
     /// One-line summary for a tooltip or footer.
     var summary: String {
         if let lastError { return "iCloud problem: \(lastError)" }
-        return "Sent to iCloud: \(ago(lastExport)). Received from iCloud: \(ago(lastImport))."
+        if checking { return "Checking iCloud for changes…" }
+        let base = "Sent to iCloud: \(ago(lastExport)). Received from iCloud: \(ago(lastImport))."
+        return checkNote.map { base + " " + $0 } ?? base
     }
     var hasProblem: Bool { lastError != nil }
+    /// SF Symbol for the current state.
+    func symbol(receiving: Bool) -> String {
+        if hasProblem { return "exclamationmark.icloud" }
+        if checking { return "arrow.clockwise.icloud" }
+        if working { return receiving ? "icloud.and.arrow.down" : "icloud.and.arrow.up" }
+        return "icloud"
+    }
 }
