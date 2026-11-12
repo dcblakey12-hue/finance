@@ -54,6 +54,14 @@ struct SubscriptionsList: View {
                     .font(.footnote)
                 }
             }
+            if !all.isEmpty {
+                Section {
+                    LabeledContent("Total per month") { Text(money(totals.monthly)).bold().monospacedDigit() }
+                    LabeledContent("Total per year") { Text(money(totals.annual)).bold().monospacedDigit() }
+                } footer: {
+                    Text("Leaves out dismissed charges and any that seem to have stopped.")
+                }
+            }
         }
         .navigationTitle("Subscriptions")
     }
