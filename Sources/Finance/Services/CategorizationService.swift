@@ -411,7 +411,7 @@ enum DedupeService {
         var keepTx: [String: TransactionRecord] = [:]
         var replaced: [UUID: UUID] = [:]
         for t in txs {
-            let key = "\(t.accountId)|\(t.fitid)"
+            let key = t.importKey
             if t.fitid.isEmpty { continue }
             if let keep = keepTx[key] {
                 replaced[t.id] = keep.id

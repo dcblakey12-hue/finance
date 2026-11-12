@@ -25,6 +25,8 @@ struct TransactionsView: View {
     @State private var editingCategoryFor: UUID?
     /// Show only entries the bank hasn't reported yet.
     @State private var outstandingOnly = false
+    /// Transaction open in the Edit Transaction sheet.
+    @State private var editingTx: TransactionRecord?
 
     var filtered: [TransactionRecord] {
         transactions.filter { t in
@@ -127,7 +129,13 @@ struct TransactionsView: View {
                         .monospacedDigit()
                         .frame(width: 100, alignment: .leading)
                     VStack(alignment: .leading) {
-                        Text(tx.name).font(.headline)
+                        HStack(spacing: 4) {
+                            Text(tx.name).font(.headline)
+                            if tx.wasEdited {
+                                Image(systemName: "pencil").font(.caption2).foregroundStyle(.secondary)
+                                    .help("You edited this. Bank syncs keep your changes.")
+                            }
+                        }
                         Text(accountLine(tx, byId)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -160,7 +168,11 @@ struct TransactionsView: View {
                 }
                 .padding(.vertical, 2)
                 .contentShape(Rectangle())
+                // Double-click to edit; simultaneous so single clicks still select straight away.
+                .simultaneousGesture(TapGesture(count: 2).onEnded { editingTx = tx })
                 .contextMenu {
+                    Button("Edit Transaction…") { editingTx = tx }
+                    Divider()
                     Button("Schedule as Recurring…") {
                         // A linked transfer pre-fills the From/To accounts.
                         let peer = tx.transferPeerId.flatMap { byId[$0] }
@@ -202,6 +214,11 @@ struct TransactionsView: View {
                 if !selection.isEmpty {
                     Text("\(selection.count) selected").foregroundStyle(.secondary)
                     Button("Clear") { selection = [] }
+                    if selection.count == 1, let only = selection.first, let tx = byId[only] {
+                        Button("Edit…") { editingTx = tx }
+                            .keyboardShortcut("e", modifiers: .command)
+                            .help("Change the date, payee, amount, category, account or notes (Cmd-E, or double-click the row)")
+                    }
                     Button("Delete…", role: .destructive) { confirmingDelete = true }
                 }
                 Spacer()
@@ -256,6 +273,13 @@ struct TransactionsView: View {
                 linkingTx = nil
                 status = "Linked to \(other.accountName) as a transfer."
             } onCancel: { linkingTx = nil }
+        }
+        .sheet(item: $editingTx) { tx in
+            TransactionEditSheet(tx: tx, accounts: accounts, categories: cats) { edit in
+                let r = TransactionEditService.apply(edit, to: tx, accounts: accounts, in: context)
+                editingTx = nil
+                status = Self.editStatus(r, tx: tx)
+            } onCancel: { editingTx = nil }
         }
         .sheet(item: $newCategoryFor) { tx in
             NewCategorySheet(existing: BudgetService.allCategories(stored: customCategories.map(\.name))) { name in
@@ -381,6 +405,14 @@ struct TransactionsView: View {
             : "Remembered \(merchant) → \(newCat) for future imports."
     }
 
+    static func editStatus(_ r: TransactionEditService.Result, tx: TransactionRecord) -> String {
+        if r.nothingChanged { return "No changes to \(tx.name)." }
+        var msg = "Saved changes to \(tx.name)."
+        if r.learned > 0 { msg += " Also set \(r.learned) other \(MerchantNormalizer.key(for: tx.name)) transaction\(r.learned == 1 ? "" : "s") to \(tx.category)." }
+        if !ManualTransactionService.isManual(tx) && !r.changed.isEmpty { msg += " Bank syncs will keep your changes." }
+        return msg
+    }
+
     private func ordinalSuffix(_ n: Int) -> String {
         if (11...13).contains(n % 100) { return "th" }
         switch n % 10 { case 1: return "st"; case 2: return "nd"; case 3: return "rd"; default: return "th" }
@@ -421,6 +453,72 @@ private struct ReconciliationBar: View {
             Text(value).font(.callout.weight(.semibold)).monospacedDigit().foregroundStyle(tint)
         }
         .help(help)
+    }
+}
+
+// MARK: - Editing
+
+/// Change a transaction's date, payee, amount, category, account and notes.
+struct TransactionEditSheet: View {
+    let tx: TransactionRecord
+    let accounts: [Account]
+    let categories: [String]
+    let onSave: (TransactionEdit) -> Void
+    let onCancel: () -> Void
+
+    @State private var edit: TransactionEdit
+    @State private var isIncome: Bool
+    @State private var amountText: String
+
+    init(tx: TransactionRecord, accounts: [Account], categories: [String],
+         onSave: @escaping (TransactionEdit) -> Void, onCancel: @escaping () -> Void) {
+        self.tx = tx; self.accounts = accounts; self.categories = categories
+        self.onSave = onSave; self.onCancel = onCancel
+        _edit = State(initialValue: TransactionEdit(tx))
+        _isIncome = State(initialValue: tx.amount > 0)
+        _amountText = State(initialValue: TransactionAmountText.format(abs(tx.amount)))
+    }
+
+    private var magnitude: Double? { TransactionAmountText.parse(amountText) }
+    private var canSave: Bool {
+        (magnitude ?? 0) > 0 && !edit.name.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Edit Transaction").font(.headline)
+            Form {
+                DatePicker("Date", selection: $edit.date, displayedComponents: .date)
+                TextField("Payee", text: $edit.name)
+                Picker("Type", selection: $isIncome) {
+                    Text("Money out").tag(false); Text("Money in").tag(true)
+                }.pickerStyle(.segmented)
+                TextField("Amount", text: $amountText)
+                Picker("Category", selection: $edit.category) {
+                    ForEach(categories.contains(edit.category) ? categories : (categories + [edit.category]).sorted(), id: \.self) { Text($0).tag($0) }
+                }
+                Picker("Account", selection: $edit.accountId) {
+                    ForEach(accounts) { Text($0.name).tag($0.accountId) }
+                }
+                TextField("Notes", text: $edit.memo, axis: .vertical).lineLimit(2...4)
+            }
+            Text(TransactionEditNotes.text(for: tx))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    var e = edit
+                    e.amount = (isIncome ? 1 : -1) * (magnitude ?? abs(tx.amount))
+                    onSave(e)
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSave)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
     }
 }
 

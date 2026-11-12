@@ -26,7 +26,8 @@ final class TransactionImportService {
         }
 
         let existingRecords: [TransactionRecord] = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
-        let existingFitIds = Set(existingRecords.map { "\($0.accountId)|\($0.fitid)" })
+        // Keyed by the account each one was imported into, so moving one to another account doesn't re-import it.
+        let existingFitIds = Set(existingRecords.map { "\($0.importKey)" })
         let rules = CategorizationService.ruleMap(in: context)
         let allowed = CategoryService.allowedBuiltIns(in: context)
         var inserted = 0, skipped = 0
@@ -43,6 +44,7 @@ final class TransactionImportService {
             if let i = manual.firstIndex(where: { ManualTransactionService.matches($0, amount: t.amount, date: t.date) }) {
                 let m = manual.remove(at: i)
                 if m.category != Categorizer.uncategorized { rec.category = m.category }
+                if rec.memo.isEmpty { rec.memo = m.memo }
                 rec.transferPeerId = m.transferPeerId
                 for other in existingRecords where other.transferPeerId == m.id { other.transferPeerId = rec.id }
                 context.delete(m)
@@ -60,6 +62,141 @@ final class TransactionImportService {
         // Scheduled payments the bank has now reported no longer count as overdue.
         ScheduleService.autoResolve(with: newlyInserted, in: context)
         return (inserted, skipped)
+    }
+}
+
+extension TransactionRecord {
+    /// "account|fitid" for the account it was imported into: the key that file imports and duplicate cleanup match on.
+    var importKey: String { "\(sourceAccountId ?? accountId)|\(fitid)" }
+    /// Fields you have changed by hand.
+    var editedFields: Set<TransactionEditService.Field> {
+        get { Set(editedFieldsRaw.split(separator: ",").compactMap { TransactionEditService.Field(rawValue: String($0)) }) }
+        set { editedFieldsRaw = newValue.map(\.rawValue).sorted().joined(separator: ",") }
+    }
+    var wasEdited: Bool { !editedFieldsRaw.isEmpty }
+}
+
+// MARK: - Editing a transaction
+
+/// The values shown in the Edit Transaction sheet (Mac and iPhone).
+struct TransactionEdit: Equatable {
+    var date: Date
+    var name: String
+    /// Signed: negative is money out.
+    var amount: Double
+    var category: String
+    var accountId: String
+    var memo: String
+
+    init(date: Date, name: String, amount: Double, category: String, accountId: String, memo: String) {
+        self.date = date; self.name = name; self.amount = amount; self.category = category
+        self.accountId = accountId; self.memo = memo
+    }
+    init(_ t: TransactionRecord) {
+        self.init(date: t.date, name: t.name, amount: t.amount, category: t.category, accountId: t.accountId, memo: t.memo)
+    }
+}
+
+/// Typing an amount: "$1,234.50" → 1234.5.
+enum TransactionAmountText {
+    static func parse(_ s: String) -> Double? {
+        Double(s.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: "")
+                .trimmingCharacters(in: .whitespaces))
+    }
+    static func format(_ v: Double) -> String { String(format: "%.2f", v) }
+}
+
+/// The explanation under the Edit Transaction sheet.
+enum TransactionEditNotes {
+    @MainActor
+    static func text(for tx: TransactionRecord) -> String {
+        if ManualTransactionService.isManual(tx) {
+            return "You entered this one, so the account balance moves with your changes. When the bank reports it, the bank's record replaces it (keeping your category and notes)."
+        }
+        return "This came from your bank. Your changes stay through later syncs and imports. The account balance stays as the bank reports it."
+    }
+}
+
+@MainActor
+enum TransactionEditService {
+    /// Things you can change on a transaction that a bank sync would otherwise overwrite.
+    enum Field: String, CaseIterable { case date, name, amount, account, memo }
+
+    struct Result: Equatable {
+        var changed: Set<Field> = []
+        var categoryChanged = false
+        /// Other uncategorized transactions from the same merchant that took the new category.
+        var learned = 0
+        var nothingChanged: Bool { changed.isEmpty && !categoryChanged }
+    }
+
+    /// Apply your changes to `tx`.
+    /// - Hand-entered transactions move their account's balance by the change (and move between accounts with it),
+    ///   just as adding or deleting one does. Imported ones leave the bank's balance alone.
+    /// - Changed date / payee / amount / notes are remembered, so a bank sync updating the same transaction keeps yours.
+    /// - Moving an imported transaction to another account remembers where it came from, so it isn't imported twice.
+    /// - A new category is remembered for the merchant, as when you change it in the list.
+    @discardableResult
+    static func apply(_ edit: TransactionEdit, to tx: TransactionRecord, accounts: [Account],
+                      in context: ModelContext, today: Date = Date(), calendar: Calendar = .current) -> Result {
+        var result = Result()
+        let manual = ManualTransactionService.isManual(tx)
+        let oldAccountId = tx.accountId, oldAmount = tx.amount
+
+        // Date: keep the time of day it had, so its order within the day doesn't jump about.
+        if !calendar.isDate(edit.date, inSameDayAs: tx.date) {
+            let t = calendar.dateComponents([.hour, .minute, .second], from: tx.date)
+            tx.date = calendar.date(bySettingHour: t.hour ?? 12, minute: t.minute ?? 0, second: t.second ?? 0,
+                                    of: calendar.startOfDay(for: edit.date)) ?? edit.date
+            result.changed.insert(.date)
+        }
+        let name = edit.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty && name != tx.name { tx.name = name; result.changed.insert(.name) }
+        if edit.amount != tx.amount && edit.amount != 0 {
+            tx.amount = edit.amount
+            tx.typeRaw = (edit.amount < 0 ? TransactionType.debit : .credit).rawValue
+            result.changed.insert(.amount)
+        }
+        let memo = edit.memo.trimmingCharacters(in: .whitespacesAndNewlines)
+        if memo != tx.memo { tx.memo = memo; result.changed.insert(.memo) }
+
+        let all = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
+        if edit.accountId != tx.accountId, let target = accounts.first(where: { $0.accountId == edit.accountId }) {
+            if !manual {
+                // Remember the account it was imported into; moving it back home forgets it.
+                let home = tx.sourceAccountId ?? oldAccountId
+                tx.sourceAccountId = home == target.accountId ? nil : home
+            }
+            tx.accountId = target.accountId
+            tx.accountName = target.name
+            // A transfer can't have both sides in the same account.
+            if let peer = TransferLinkService.peer(of: tx, in: all), peer.accountId == target.accountId {
+                TransferLinkService.detach(tx, among: all)
+            }
+            result.changed.insert(.account)
+        }
+
+        // Hand-entered transactions are part of the balance the app keeps; bank-reported ones are in the bank's figure.
+        if manual && (result.changed.contains(.amount) || result.changed.contains(.account)) {
+            accounts.first { $0.accountId == oldAccountId }?.balance -= oldAmount
+            accounts.first { $0.accountId == tx.accountId }?.balance += tx.amount
+        }
+
+        // Remember what you changed so a bank sync doesn't put it back (manual ones are replaced by the bank's record anyway).
+        if !manual { tx.editedFields.formUnion(result.changed) }
+
+        if edit.category != tx.category {
+            if tx.transferPeerId != nil && edit.category != Categorizer.transfer { TransferLinkService.detach(tx, among: all) }
+            result.learned = CategorizationService.learn(from: tx, category: edit.category, in: context)   // also saves
+            result.categoryChanged = true
+        }
+        try? context.save()
+
+        // A payment moved to the right day or amount may now settle a scheduled one in Coming Up.
+        if !result.changed.isDisjoint(with: [.date, .amount, .name, .account]) {
+            ScheduleService.autoResolve(with: [tx], in: context, today: today, calendar: calendar)
+        }
+        return result
     }
 }
 
@@ -466,6 +603,9 @@ struct BackupFile: Codable, Equatable {
         var name: String; var amount: Double; var typeRaw: String; var category: String; var memo: String; var transferPeerId: UUID?
         /// Missing in backups made before transactions could be reconciled by hand.
         var reconciledByHand: Bool? = nil
+        /// Missing in backups made before transactions could be edited.
+        var editedFieldsRaw: String? = nil
+        var sourceAccountId: String? = nil
     }
     struct EnvelopeRow: Codable, Equatable { var id: UUID; var category: String; var year: Int; var month: Int; var allocated: Double }
     struct ScheduleRow: Codable, Equatable {
@@ -505,7 +645,8 @@ enum BackupService {
             accounts: all(Account.self).map { .init(id: $0.id, name: $0.name, typeRaw: $0.typeRaw, accountId: $0.accountId, bankName: $0.bankName, balance: $0.balance, cashFlowOverride: $0.cashFlowOverride,
                                                plaidLastSync: $0.plaidLastSync, plaidSyncFailedAt: $0.plaidSyncFailedAt, plaidSyncError: $0.plaidSyncError) },
             transactions: all(TransactionRecord.self).map { .init(id: $0.id, fitid: $0.fitid, accountId: $0.accountId, accountName: $0.accountName, date: $0.date, name: $0.name, amount: $0.amount, typeRaw: $0.typeRaw, category: $0.category, memo: $0.memo, transferPeerId: $0.transferPeerId,
-                                                             reconciledByHand: $0.reconciledByHand ? true : nil) },
+                                                             reconciledByHand: $0.reconciledByHand ? true : nil,
+                                                             editedFieldsRaw: $0.editedFieldsRaw.isEmpty ? nil : $0.editedFieldsRaw, sourceAccountId: $0.sourceAccountId) },
             envelopes: all(Envelope.self).map { .init(id: $0.id, category: $0.category, year: $0.year, month: $0.month, allocated: $0.allocated) },
             schedules: all(RecurringBill.self).map { .init(id: $0.id, name: $0.name, amount: $0.amount, dueDay: $0.dueDay, category: $0.category, isActive: $0.isActive, lastPaid: $0.lastPaid, kindRaw: $0.kindRaw, fromAccountId: $0.fromAccountId, toAccountId: $0.toAccountId, frequencyRaw: $0.frequencyRaw, secondDay: $0.secondDay, anchorDate: $0.anchorDate, occurrenceLogRaw: $0.occurrenceLogRaw, accountId: $0.accountId, trackedSince: $0.trackedSince, endDate: $0.endDate) },
             profiles: all(OFXProfile.self).map { .init(id: $0.id, bankName: $0.bankName, ofxHomeURL: $0.ofxHomeURL, username: $0.username, accountId: $0.accountId, clientUID: $0.clientUID, lastSync: $0.lastSync) },
@@ -541,7 +682,10 @@ enum BackupService {
         }
         for t in file.transactions {
             let r = TransactionRecord(id: t.id, fitid: t.fitid, accountId: t.accountId, accountName: t.accountName, date: t.date, name: t.name, amount: t.amount, type: TransactionType(rawValue: t.typeRaw) ?? .debit, category: t.category, memo: t.memo)
-            r.transferPeerId = t.transferPeerId; r.reconciledByHand = t.reconciledByHand ?? false; context.insert(r)
+            r.transferPeerId = t.transferPeerId
+            r.editedFieldsRaw = t.editedFieldsRaw ?? ""; r.sourceAccountId = t.sourceAccountId
+            r.reconciledByHand = t.reconciledByHand ?? false
+            context.insert(r)
         }
         for e in file.envelopes { context.insert(Envelope(id: e.id, category: e.category, year: e.year, month: e.month, allocated: e.allocated)) }
         for s in file.schedules {

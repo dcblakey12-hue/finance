@@ -246,6 +246,12 @@ final class TransactionRecord {
     /// account has no bank feed). Ignored for bank-synced and imported transactions, which are
     /// always reconciled. See `ReconciliationService`.
     var reconciledByHand: Bool = false
+    /// Fields you changed by hand ("date,name,amount,..."; see `TransactionEditService.Field`).
+    /// A bank sync's update to the same transaction leaves these alone.
+    var editedFieldsRaw: String = ""
+    /// The account an imported transaction came from, if you moved it to another account,
+    /// so importing the same file again still recognizes it. Nil when it was never moved.
+    var sourceAccountId: String? = nil
 
     init(id: UUID = UUID(), fitid: String, accountId: String, accountName: String, date: Date, name: String, amount: Double, type: TransactionType, category: String = "Uncategorized", memo: String = "") {
         self.id = id; self.fitid = fitid; self.accountId = accountId; self.accountName = accountName
