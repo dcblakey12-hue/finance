@@ -119,24 +119,9 @@ struct SubscriptionsView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            // Total of the rows listed above (leaving out any that seem to have stopped).
-            let counted = shown.filter { !$0.mayHaveStopped }
-            let monthly = counted.reduce(0) { $0 + $1.monthlyCost }
-            VStack(spacing: 6) {
-                if !shown.isEmpty {
-                    HStack {
-                        Text("Total (\(counted.count) \(counted.count == 1 ? "charge" : "charges"))").font(.headline)
-                        Spacer()
-                        Text("\(money(monthly)) / month").font(.headline).monospacedDigit()
-                        Text("\(money(monthly * 12)) / year").font(.headline).monospacedDigit().frame(minWidth: 140, alignment: .trailing)
-                    }
-                    Divider()
-                }
-                Text("Found by looking for the same merchant charging a similar amount on a regular schedule. Totals leave out dismissed ones and any that seem to have stopped. Double-click a row to see its charges.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(8).background(.bar)
+            Text("Found by looking for the same merchant charging a similar amount on a regular schedule. Totals leave out dismissed ones and any that seem to have stopped. Double-click a row to see its charges.")
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(8).background(.bar)
         }
         .navigationTitle("Subscriptions")
         .sheet(item: $showing) { s in
