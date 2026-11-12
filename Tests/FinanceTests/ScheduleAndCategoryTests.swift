@@ -1283,3 +1283,106 @@ final class CashFlowScopeTests: XCTestCase {
         XCTAssertFalse(restored[0].countsInCashFlow)   // falls back to the mortgage default
     }
 }
+
+/// Payments the bank reports a few days before or after their scheduled date.
+extension OverdueTests {
+    private func tx(_ name: String, _ amount: Double, on date: Date, account: String = "chk") -> TransactionRecord {
+        let t = TransactionRecord(fitid: UUID().uuidString, accountId: account, accountName: "Checking", date: date,
+                                  name: name, amount: amount, type: amount > 0 ? .credit : .debit)
+        context.insert(t)
+        return t
+    }
+    private func payday(anchor: Date, amount: Double = 2000) -> RecurringBill {
+        let b = RecurringBill(name: "Acme Payroll", amount: amount, dueDay: 1, category: "Income", isIncome: true)
+        b.frequencyRaw = ScheduleFrequency.biweekly.rawValue; b.anchorDate = anchor
+        b.trackedSince = day(2026, 11, 5)
+        context.insert(b)
+        return b
+    }
+
+    func testEarlyPaycheckRollsComingUpToTheNextPayday() {
+        let today = day(2026, 11, 11)
+        let pay = payday(anchor: day(2026, 11, 16))
+        XCTAssertEqual(pay.rule.nextDate(from: today, calendar: cal), day(2026, 11, 16))
+        let deposit = tx("ACME PAYROLL DIR DEP", 2010, on: today)   // arrived 5 days early
+        XCTAssertEqual(ScheduleService.autoResolve(with: [deposit], in: context, today: today, calendar: cal), 1)
+        XCTAssertEqual(pay.occurrenceLog[OccurrenceLog.key(day(2026, 11, 16), calendar: cal)], .entered)
+        XCTAssertEqual(pay.rule.nextDate(from: today, calendar: cal), day(2026, 11, 30))
+        XCTAssertTrue(CashCalendar.events(on: day(2026, 11, 16), schedules: [pay.item], calendar: cal).isEmpty)
+        XCTAssertEqual(pay.lastPaid, today)
+        XCTAssertTrue(ScheduleService.overdue([pay], today: day(2026, 11, 20), calendar: cal).isEmpty)
+    }
+
+    func testBillPaidEarlyMovesToNextMonth() {
+        let today = day(2026, 11, 11)
+        let rent = RecurringBill(name: "Rent", amount: 1500, dueDay: 15, category: "Housing")
+        rent.trackedSince = day(2026, 10, 1)
+        context.insert(rent)
+        let paid = tx("ONLINE PAYMENT LANDLORD LLC", -1500, on: day(2026, 11, 8))
+        XCTAssertEqual(ScheduleService.autoResolve(with: [paid], in: context, today: today, calendar: cal), 1)
+        XCTAssertEqual(rent.rule.nextDate(from: today, calendar: cal), day(2026, 12, 15))
+    }
+
+    func testLatePaymentStillResolvesOverdue() {
+        let today = day(2026, 11, 12)
+        let rent = RecurringBill(name: "Rent", amount: 1500, dueDay: 3, category: "Housing")
+        rent.trackedSince = day(2026, 10, 20)
+        context.insert(rent)
+        XCTAssertEqual(ScheduleService.overdue([rent], today: today, calendar: cal).count, 1)
+        let paid = tx("LANDLORD", -1500, on: day(2026, 11, 11))   // 8 days late
+        XCTAssertEqual(ScheduleService.autoResolve(with: [paid], in: context, today: today, calendar: cal), 1)
+        XCTAssertTrue(ScheduleService.overdue([rent], today: today, calendar: cal).isEmpty)
+        XCTAssertEqual(rent.rule.nextDate(from: today, calendar: cal), day(2026, 12, 3))
+    }
+
+    func testEarlyMatchNeedsAmountDirectionAndTiming() {
+        let today = day(2026, 11, 11)
+        let pay = payday(anchor: day(2026, 11, 16))
+        let candidates = [
+            tx("ACME PAYROLL", 900, on: today),                       // far too small
+            tx("ACME PAYROLL", -2000, on: today),                     // money going out
+            tx("ACME PAYROLL", 2000, on: day(2026, 11, 13), account: "sav") // fine, but next case sets the account
+        ]
+        pay.accountId = "chk"
+        XCTAssertEqual(ScheduleService.autoResolve(with: candidates, in: context, today: today, calendar: cal), 0)
+        // Dated in the future: hasn't happened yet.
+        XCTAssertEqual(ScheduleService.autoResolve(with: [tx("ACME PAYROLL", 2000, on: day(2026, 11, 14))],
+                                                   in: context, today: today, calendar: cal), 0)
+        XCTAssertEqual(pay.rule.nextDate(from: today, calendar: cal), day(2026, 11, 16))
+    }
+
+    func testTransactionOnlyCountsForTheNearestOccurrence() {
+        // Last payday (Nov 2) was paid; its deposit must not also count for Nov 16.
+        let today = day(2026, 11, 11)
+        let pay = payday(anchor: day(2026, 11, 16))
+        pay.record(.entered, on: day(2026, 11, 2), now: today, calendar: cal)
+        let lastDeposit = tx("ACME PAYROLL", 2000, on: day(2026, 11, 3))
+        XCTAssertEqual(ScheduleService.autoResolve(with: [lastDeposit], in: context, today: today, calendar: cal), 0)
+        XCTAssertEqual(pay.rule.nextDate(from: today, calendar: cal), day(2026, 11, 16))
+    }
+
+    func testMatchingPayeeAllowsALargerAmountDifference() {
+        let today = day(2026, 11, 11)
+        let pay = payday(anchor: day(2026, 11, 16))
+        XCTAssertEqual(ScheduleService.autoResolve(with: [tx("OTHER CO", 2500, on: today)], in: context, today: today, calendar: cal), 0)
+        XCTAssertEqual(ScheduleService.autoResolve(with: [tx("ACME PAYROLL", 2500, on: today)], in: context, today: today, calendar: cal), 1)
+        XCTAssertEqual(pay.rule.nextDate(from: today, calendar: cal), day(2026, 11, 30))
+    }
+
+    func testReconcileRecentPicksUpAlreadyImportedPaycheck() throws {
+        let today = day(2026, 11, 11)
+        let pay = payday(anchor: day(2026, 11, 16))
+        _ = tx("ACME PAYROLL", 2000, on: today)
+        _ = tx("COFFEE", -4, on: today)
+        try context.save()
+        XCTAssertEqual(ScheduleService.reconcileRecent(in: context, today: today, calendar: cal), 1)
+        XCTAssertEqual(pay.rule.nextDate(from: today, calendar: cal), day(2026, 11, 30))
+        XCTAssertEqual(ScheduleService.reconcileRecent(in: context, today: today, calendar: cal), 0)   // nothing twice
+    }
+
+    func testSamePayee() {
+        XCTAssertTrue(ScheduleService.samePayee("ACME PAYROLL DIR DEP 1234", "Acme Payroll"))
+        XCTAssertTrue(ScheduleService.samePayee("ACME CORP", "Acme"))
+        XCTAssertFalse(ScheduleService.samePayee("NETFLIX.COM", "Acme Payroll"))
+    }
+}

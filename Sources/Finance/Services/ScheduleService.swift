@@ -307,37 +307,92 @@ enum ScheduleService {
         if changed { try? context.save() }
     }
 
-    /// After an import: mark overdue payments as entered when the bank reported a matching
-    /// transaction (same direction, amount within 15%, within 5 days of the due date, in the
-    /// schedule's usual account if it has one). Each new transaction resolves at most one payment.
+    /// How many days before or after its due date a bank transaction can still count as a
+    /// scheduled payment (paychecks often land a few days early; bills get paid early or late).
+    static let matchWindowDays = 10
+
+    /// Do a bank transaction's name and a schedule's name look like the same payee?
+    static func samePayee(_ transactionName: String, _ scheduleName: String) -> Bool {
+        let a = MerchantNormalizer.key(for: transactionName), b = MerchantNormalizer.key(for: scheduleName)
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        if a == b || a.hasPrefix(b) || b.hasPrefix(a) { return true }
+        // Same first word, e.g. "ACME" vs "ACME PAYROLL".
+        return a.split(separator: " ").first == b.split(separator: " ").first
+    }
+
+    /// The occurrence of `rule` (ignoring skips/entries and the end date) closest to `date`, within the window.
+    static func nearestOccurrence(of rule: ScheduleRule, to date: Date, calendar: Calendar = .current) -> Date? {
+        var open = rule; open.excluded = []; open.end = nil
+        let day = calendar.startOfDay(for: date)
+        guard let from = calendar.date(byAdding: .day, value: -matchWindowDays, to: day),
+              let to = calendar.date(byAdding: .day, value: matchWindowDays, to: day) else { return nil }
+        func dist(_ d: Date) -> Int { abs(calendar.dateComponents([.day], from: day, to: d).day ?? 999) }
+        return open.dates(from: from, to: to, calendar: calendar).min { (dist($0), $0) < (dist($1), $1) }
+    }
+
+    /// Mark scheduled payments as entered when the bank has reported a matching transaction:
+    /// same direction, in the schedule's usual account if it has one, amount within 15% (35% when
+    /// the payee name matches too), and posted up to `matchWindowDays` before or after the due date.
+    /// That covers overdue payments and ones due in the next few days that arrived early (e.g. a
+    /// paycheck deposited ahead of payday), so the schedule rolls on to its next date. A transaction
+    /// only counts for the occurrence of that schedule nearest to it, and resolves at most one payment.
     @MainActor @discardableResult
     static func autoResolve(with newTransactions: [TransactionRecord], in context: ModelContext,
                             today: Date = Date(), calendar: Calendar = .current) -> Int {
         let bills = ((try? context.fetch(FetchDescriptor<RecurringBill>())) ?? []).filter { !$0.isTransfer }
+        let todayStart = calendar.startOfDay(for: today)
+        guard let horizon = calendar.date(byAdding: .day, value: matchWindowDays, to: todayStart) else { return 0 }
+        // Only transactions that have actually happened (not future-dated entries).
+        let posted = newTransactions.filter { calendar.startOfDay(for: $0.date) <= todayStart }
+        guard !posted.isEmpty else { return 0 }
+        // Overdue payments, then today's and upcoming ones that may have been paid early.
+        var due = overdue(bills, today: today, calendar: calendar)
+        for b in bills where b.isActive {
+            for d in b.rule.dates(from: todayStart, to: horizon, calendar: calendar) { due.append(OverdueItem(bill: b, date: d)) }
+        }
         var used = Set<UUID>()
         var resolved = 0
-        for item in overdue(bills, today: today, calendar: calendar) {
+        for item in due {
             let b = item.bill
             let size = abs(b.amount)
-            func gap(_ t: TransactionRecord) -> (Double, Int) {
-                (abs(abs(t.amount) - size),
-                 abs(calendar.dateComponents([.day], from: calendar.startOfDay(for: t.date), to: item.date).day ?? 99))
+            let rule = b.rule
+            func days(_ t: TransactionRecord) -> Int {
+                abs(calendar.dateComponents([.day], from: calendar.startOfDay(for: t.date), to: item.date).day ?? 999)
             }
-            let match = newTransactions
+            // Best first: payee matches, then closest amount, then closest date.
+            func rank(_ t: TransactionRecord) -> (Int, Double, Int) {
+                (samePayee(t.name, b.name) ? 0 : 1, abs(abs(t.amount) - size), days(t))
+            }
+            let match = posted
                 .filter { t in
-                    !used.contains(t.id) && (t.amount > 0) == b.isIncome &&
-                    (b.accountId == nil || b.accountId == t.accountId) &&
-                    gap(t).0 <= max(1, size * 0.15) && gap(t).1 <= 5
+                    guard !used.contains(t.id), (t.amount > 0) == b.isIncome,
+                          b.accountId == nil || b.accountId == t.accountId,
+                          days(t) <= matchWindowDays else { return false }
+                    let tolerance = samePayee(t.name, b.name) ? 0.35 : 0.15
+                    guard abs(abs(t.amount) - size) <= max(1, size * tolerance) else { return false }
+                    return nearestOccurrence(of: rule, to: t.date, calendar: calendar) == item.date
                 }
-                .min { gap($0) < gap($1) }
+                .min { rank($0) < rank($1) }
             if let match {
                 used.insert(match.id)
                 b.record(.entered, on: item.date, now: today, calendar: calendar)
+                if b.lastPaid.map({ $0 < match.date }) ?? true { b.lastPaid = match.date }
                 resolved += 1
             }
         }
         if resolved > 0 { try? context.save() }
         return resolved
+    }
+
+    /// Check the last few weeks of transactions against the schedules (run when the app opens),
+    /// so a payment that arrived early or late is picked up even if it was imported earlier,
+    /// or synced in from the other device.
+    @MainActor @discardableResult
+    static func reconcileRecent(in context: ModelContext, today: Date = Date(), calendar: Calendar = .current) -> Int {
+        let todayStart = calendar.startOfDay(for: today)
+        guard let since = calendar.date(byAdding: .day, value: -(matchWindowDays + 21), to: todayStart) else { return 0 }
+        let recent = (try? context.fetch(FetchDescriptor<TransactionRecord>(predicate: #Predicate { $0.date >= since }))) ?? []
+        return autoResolve(with: recent, in: context, today: today, calendar: calendar)
     }
 
     /// Leave this payment out: no transaction, and the schedule moves on to the next one.

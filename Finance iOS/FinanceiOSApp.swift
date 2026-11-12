@@ -155,6 +155,7 @@ struct RootView: View {
             // seed its own copy or it would bring back categories you renamed or deleted.
             DedupeService.run(in: context)
             ScheduleService.ensureTracking(in: context)
+            ScheduleService.reconcileRecent(in: context)   // payments that arrived early or late
         }
     }
 }
