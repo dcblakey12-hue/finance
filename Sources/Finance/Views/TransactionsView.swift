@@ -403,7 +403,7 @@ private struct ReconciliationBar: View {
             figure(summary.outstandingCount == 1 ? "1 outstanding" : "\(summary.outstandingCount) outstanding",
                    money(summary.outstandingTotal), tint: summary.hasOutstanding ? .orange : .secondary,
                    help: "Entered by hand and not reported by the bank yet. They clear when a sync or import matches them (within 5 days), or when you mark them reconciled.")
-            figure("Balance with outstanding", money(summary.balance),
+            figure("Unreconciled balance", money(summary.balance),
                    help: "The reconciled balance plus the outstanding entries: what you'll have once they all clear")
             Spacer()
             Toggle("Outstanding only", isOn: $outstandingOnly)

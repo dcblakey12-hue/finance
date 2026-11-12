@@ -241,7 +241,7 @@ private struct ReconciliationSection: View {
         }
         .disabled(!summary.hasOutstanding && !outstandingOnly)
         .tint(.primary)
-        LabeledContent("Balance with outstanding") {
+        LabeledContent("Unreconciled balance") {
             Text(money(summary.balance)).monospacedDigit()
         }
     }
