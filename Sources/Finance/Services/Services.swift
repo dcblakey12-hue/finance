@@ -470,6 +470,7 @@ struct BackupFile: Codable, Equatable {
     struct ProfileRow: Codable, Equatable { var id: UUID; var bankName: String; var ofxHomeURL: String; var username: String; var accountId: String; var clientUID: String; var lastSync: Date? }
     struct RuleRow: Codable, Equatable { var merchantKey: String; var category: String; var createdAt: Date; var updatedAt: Date }
     struct CategoryRow: Codable, Equatable { var name: String; var createdAt: Date }
+    struct SubscriptionMarkRow: Codable, Equatable { var merchantKey: String; var cadenceRaw: String; var amount: Double; var statusRaw: String; var updatedAt: Date }
 
     var format: Int = 1
     var createdAt: Date
@@ -480,6 +481,8 @@ struct BackupFile: Codable, Equatable {
     var profiles: [ProfileRow]
     var rules: [RuleRow]
     var categories: [CategoryRow]
+    /// Your confirmed / dismissed subscriptions. Optional so backups made before it existed still load.
+    var subscriptionMarks: [SubscriptionMarkRow]? = nil
 
     var summary: String {
         "\(accounts.count) accounts, \(transactions.count) transactions, \(schedules.count) scheduled, \(envelopes.count) budget lines"
@@ -498,7 +501,8 @@ enum BackupService {
             schedules: all(RecurringBill.self).map { .init(id: $0.id, name: $0.name, amount: $0.amount, dueDay: $0.dueDay, category: $0.category, isActive: $0.isActive, lastPaid: $0.lastPaid, kindRaw: $0.kindRaw, fromAccountId: $0.fromAccountId, toAccountId: $0.toAccountId, frequencyRaw: $0.frequencyRaw, secondDay: $0.secondDay, anchorDate: $0.anchorDate, occurrenceLogRaw: $0.occurrenceLogRaw, accountId: $0.accountId, trackedSince: $0.trackedSince, endDate: $0.endDate) },
             profiles: all(OFXProfile.self).map { .init(id: $0.id, bankName: $0.bankName, ofxHomeURL: $0.ofxHomeURL, username: $0.username, accountId: $0.accountId, clientUID: $0.clientUID, lastSync: $0.lastSync) },
             rules: all(CategoryRule.self).map { .init(merchantKey: $0.merchantKey, category: $0.category, createdAt: $0.createdAt, updatedAt: $0.updatedAt) },
-            categories: all(CustomCategory.self).map { .init(name: $0.name, createdAt: $0.createdAt) })
+            categories: all(CustomCategory.self).map { .init(name: $0.name, createdAt: $0.createdAt) },
+            subscriptionMarks: all(SubscriptionMark.self).map { .init(merchantKey: $0.merchantKey, cadenceRaw: $0.cadenceRaw, amount: $0.amount, statusRaw: $0.statusRaw, updatedAt: $0.updatedAt) })
     }
 
     static func encode(_ file: BackupFile) throws -> Data {
@@ -514,7 +518,7 @@ enum BackupService {
     static func wipe(in context: ModelContext) {
         func clear<T: PersistentModel>(_: T.Type) { for x in (try? context.fetch(FetchDescriptor<T>())) ?? [] { context.delete(x) } }
         clear(TransactionRecord.self); clear(Account.self); clear(Envelope.self); clear(RecurringBill.self)
-        clear(OFXProfile.self); clear(CategoryRule.self); clear(CustomCategory.self)
+        clear(OFXProfile.self); clear(CategoryRule.self); clear(CustomCategory.self); clear(SubscriptionMark.self)
         try? context.save()
     }
 
@@ -540,6 +544,10 @@ enum BackupService {
         }
         for r in file.rules { context.insert(CategoryRule(merchantKey: r.merchantKey, category: r.category, now: r.createdAt)); }
         for c in file.categories { context.insert(CustomCategory(name: c.name, createdAt: c.createdAt)) }
+        for m in file.subscriptionMarks ?? [] {
+            let mark = SubscriptionMark(merchantKey: m.merchantKey, cadence: .monthly, amount: m.amount, status: .confirmed, now: m.updatedAt)
+            mark.cadenceRaw = m.cadenceRaw; mark.statusRaw = m.statusRaw; context.insert(mark)
+        }
         try? context.save()
     }
 

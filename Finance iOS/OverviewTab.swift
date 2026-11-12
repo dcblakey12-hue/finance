@@ -8,6 +8,7 @@ struct OverviewTab: View {
     @Query(sort: \Account.name) private var allAccounts: [Account]
     @Query(sort: \TransactionRecord.date, order: .reverse) private var allTransactions: [TransactionRecord]
     @Query private var bills: [RecurringBill]
+    @Query private var subscriptionMarks: [SubscriptionMark]
 
     /// Accounts the overview covers (comma-separated accountIds; empty = all).
     @AppStorage("overview.accountIds") private var accountIdsRaw = ""
@@ -181,6 +182,28 @@ struct OverviewTab: View {
                                 }
                             }
                         }
+                        case .subscriptions:
+                        card("Subscriptions") {
+                            // Every account, not just the ones picked for the overview: a subscription is yours either way.
+                            let subs = SubscriptionService.detect(transactions: allTransactions, marks: subscriptionMarks)
+                            let totals = SubscriptionService.totals(subs)
+                            let toReview = subs.filter { $0.status == .unreviewed }.count
+                            NavigationLink {
+                                SubscriptionsList()
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("\(money(totals.monthly))/mo").font(.title3.bold().monospacedDigit())
+                                        Text(subs.isEmpty ? "No recurring charges found yet"
+                                             : "\(money(totals.annual)) a year" + (toReview > 0 ? " • \(toReview) to review" : ""))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
                         case .cloud:
                         card("iCloud sync") {
                             Button { cloud.checkNow(context: context) } label: {
@@ -277,7 +300,7 @@ struct OverviewTab: View {
 }
 
 enum OverviewCard: String, CaseIterable, Identifiable {
-    case tiles, cash, coming, netWorth, spending, cloud
+    case tiles, cash, coming, netWorth, spending, subscriptions, cloud
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -286,6 +309,7 @@ enum OverviewCard: String, CaseIterable, Identifiable {
         case .coming: return "Coming up"
         case .netWorth: return "Net worth"
         case .spending: return "Spent in the last 30 days"
+        case .subscriptions: return "Subscriptions"
         case .cloud: return "iCloud sync"
         }
     }

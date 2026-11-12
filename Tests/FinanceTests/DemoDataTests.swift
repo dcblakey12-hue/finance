@@ -65,7 +65,7 @@ final class DemoDataTests: XCTestCase {
 
     func testRestoresIntoAStoreWithOneOverduePayment() throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         let context = ModelContext(container)
         let file = DemoData.make(today: today, calendar: cal)
