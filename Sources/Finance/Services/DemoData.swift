@@ -162,7 +162,7 @@ enum DemoData {
 
     /// The app's standard categories plus a few of the household's own.
     static let categories = ["Housing", "Groceries", "Dining", "Transport", "Utilities", "Entertainment", "Health",
-                             "Savings", "Debt", "Other", "Childcare", "Shopping", "Travel"]
+                             "Savings", "Debt", "Other", "Childcare", "Shopping", "Travel", "Fees"]
 
     /// Monthly budget envelopes.
     static let budget: [(String, Double)] = [
@@ -334,6 +334,10 @@ enum DemoData {
                 if monthsAgo == 4 && on(6) { add(DemoData.travelMC, day, "BLUEJAY AIRWAYS", -486.40, "Travel") }
                 if monthsAgo == 4 && on(21) { add(DemoData.travelMC, day, "SEASIDE INN", -642.18, "Travel") }
                 if monthsAgo == 1 && on(10) { add(DemoData.travelMC, day, "MOUNTAIN VIEW LODGE", -389.75, "Travel") }
+                // A few fees and some interest, for the Year in Review to find
+                if monthsAgo == 4 && on(22) { add(DemoData.travelMC, day, "FOREIGN TRANSACTION FEE", -19.27, "Fees") }
+                if monthsAgo == 3 && on(20) { add(DemoData.travelMC, day, "INTEREST CHARGE ON PURCHASES", -8.62, "Fees") }
+                if monthsAgo == 2 && on(5) { add(DemoData.checking, day, "OUT OF NETWORK ATM FEE", -3.50, "Fees") }
 
                 // A few recent purchases left uncategorized, to show categorizing
                 if cal.isDate(day, inSameDayAs: days(-2, from: today)) { add(DemoData.visa, day, "SQ *LUNCHBOX TRUCK", -14.25, "Uncategorized") }

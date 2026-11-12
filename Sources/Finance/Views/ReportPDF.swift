@@ -76,8 +76,8 @@ enum ReportPDF {
                 HStack(alignment: .top, spacing: 18) {
                     table("Top merchants", ["Merchant", "Spent", "#"],
                           r.byMerchant.prefix(12).map { [$0.name, money($0.amount), String($0.count)] })
-                    table("Fees and interest", ["Date", "Payee", "Amount"],
-                          r.fees.prefix(12).map { [$0.date.formatted(.dateTime.month(.abbreviated).day()), $0.name, money(-$0.amount)] },
+                    table("Fees and interest", ["Payee", "Date", "Amount"],
+                          r.fees.prefix(12).map { [$0.name, $0.date.formatted(.dateTime.month(.abbreviated).day()), money(-$0.amount)] },
                           empty: "None in this period")
                 }
                 Spacer(minLength: 0)
@@ -95,21 +95,22 @@ enum ReportPDF {
             }
         }
 
+        /// First column takes the spare room; the others are fixed-width numbers.
+        @ViewBuilder private func cell(_ v: String, _ i: Int) -> some View {
+            if i == 0 { Text(v).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading) }
+            else { Text(v).lineLimit(1).frame(width: 62, alignment: .trailing) }
+        }
+
         private func table(_ heading: String, _ cols: [String], _ rows: [[String]], empty: String = "Nothing to show") -> some View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(heading).font(.system(size: 11, weight: .bold))
                 HStack {
-                    ForEach(Array(cols.enumerated()), id: \.offset) { i, c in
-                        Text(c).frame(maxWidth: .infinity, alignment: i == 0 ? .leading : .trailing)
-                    }
+                    ForEach(Array(cols.enumerated()), id: \.offset) { i, c in cell(c, i) }
                 }.font(.system(size: 8, weight: .semibold)).foregroundStyle(.gray)
                 if rows.isEmpty { Text(empty).font(.system(size: 9)).foregroundStyle(.gray) }
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     HStack {
-                        ForEach(Array(row.enumerated()), id: \.offset) { i, v in
-                            Text(v).lineLimit(1).frame(maxWidth: .infinity, alignment: i == 0 ? .leading : .trailing)
-                                .layoutPriority(i == 0 ? 1 : 0)
-                        }
+                        ForEach(Array(row.enumerated()), id: \.offset) { i, v in cell(v, i) }
                     }.font(.system(size: 9)).monospacedDigit()
                 }
             }
