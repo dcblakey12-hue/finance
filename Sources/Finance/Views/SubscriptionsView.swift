@@ -21,6 +21,8 @@ struct SubscriptionsView: View {
     @Query private var marks: [SubscriptionMark]
     @Environment(\.modelContext) private var context
     @State private var filter: SubscriptionFilter = .active
+    /// Show one account's subscriptions (OFX accountId); nil = every account.
+    @State private var accountFilter: String?
     @State private var selection = Set<String>()
     @State private var showing: DetectedSubscription?
 
@@ -29,7 +31,9 @@ struct SubscriptionsView: View {
 
     var body: some View {
         let all = SubscriptionService.detect(transactions: transactions, marks: marks)
-        let shown = all.filter { filter.includes($0) }
+        let listed = all.filter { filter.includes($0) }
+        let groups = SubscriptionService.byAccount(listed)
+        let shown = listed.filter { accountFilter == nil || $0.accountId == accountFilter }
         let totals = SubscriptionService.totals(all)
         let toReview = all.filter { $0.status == .unreviewed }.count
 
@@ -48,6 +52,8 @@ struct SubscriptionsView: View {
             }
             .padding()
 
+            if groups.count > 1 || accountFilter != nil { accountStrip(groups, total: listed) }
+
             if shown.isEmpty {
                 ContentUnavailableView(emptyTitle, systemImage: "repeat.circle",
                                        description: Text(emptyDescription))
@@ -59,9 +65,10 @@ struct SubscriptionsView: View {
                                 Text(s.name).foregroundStyle(s.status == .dismissed ? .secondary : .primary)
                                 badge(s)
                             }
-                            Text("\(s.category) • \(s.accountName)").font(.caption).foregroundStyle(.secondary)
+                            Text(s.category).font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    TableColumn("Account") { s in Text(s.accountName) }.width(min: 110, ideal: 150)
                     TableColumn("Repeats") { s in
                         Text("\(s.cadence.label) • \(s.chargeCount) charges").foregroundStyle(.secondary)
                     }.width(min: 120, ideal: 160)
@@ -127,6 +134,38 @@ struct SubscriptionsView: View {
         .sheet(item: $showing) { s in
             SubscriptionChargesSheet(subscription: s, transactions: transactions.filter { s.transactionIds.contains($0.id) })
         }
+    }
+
+    /// One button per card or bank account with what its subscriptions cost; click to show only that account.
+    private func accountStrip(_ groups: [SubscriptionService.AccountGroup], total: [DetectedSubscription]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                chip("All accounts", count: total.count, monthly: SubscriptionService.totals(total).monthly, selected: accountFilter == nil) {
+                    accountFilter = nil
+                }
+                ForEach(groups) { g in
+                    chip(g.accountName, count: g.items.count, monthly: g.totals.monthly, selected: accountFilter == g.accountId) {
+                        accountFilter = accountFilter == g.accountId ? nil : g.accountId
+                    }
+                }
+            }
+            .padding(.horizontal)
+        }
+        .padding(.bottom, 8)
+    }
+
+    private func chip(_ title: String, count: Int, monthly: Double, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.callout.weight(.medium)).lineLimit(1)
+                Text("\(count) • \(money(monthly))/mo").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(selected ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(selected ? Color.accentColor : .clear))
+        }
+        .buttonStyle(.plain)
+        .help("Show only the subscriptions charged to \(title)")
     }
 
     private var emptyTitle: String {

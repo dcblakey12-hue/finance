@@ -12,14 +12,16 @@ import SwiftData
 final class SubscriptionMark {
     var merchantKey: String = ""
     var cadenceRaw: String = "monthly"
+    /// Account (OFX accountId) the charge goes through; empty matches any account.
+    var accountId: String = ""
     /// Amount (positive) of the charge when you decided.
     var amount: Double = 0
     /// "confirmed" | "dismissed"
     var statusRaw: String = "confirmed"
     var updatedAt: Date = Date()
 
-    init(merchantKey: String, cadence: SubscriptionCadence, amount: Double, status: SubscriptionStatus, now: Date = Date()) {
-        self.merchantKey = merchantKey; self.cadenceRaw = cadence.rawValue; self.amount = abs(amount)
+    init(merchantKey: String, accountId: String = "", cadence: SubscriptionCadence, amount: Double, status: SubscriptionStatus, now: Date = Date()) {
+        self.merchantKey = merchantKey; self.accountId = accountId; self.cadenceRaw = cadence.rawValue; self.amount = abs(amount)
         self.statusRaw = status.rawValue; self.updatedAt = now
     }
     var status: SubscriptionStatus { SubscriptionStatus(rawValue: statusRaw) ?? .confirmed }
@@ -93,7 +95,7 @@ enum SubscriptionCadence: String, CaseIterable, Codable, Identifiable {
 
 /// A recurring charge that might be a subscription.
 struct DetectedSubscription: Identifiable, Equatable {
-    var id: String { "\(merchantKey)|\(cadence.rawValue)|\(String(format: "%.2f", amount))" }
+    var id: String { "\(merchantKey)|\(accountId)|\(cadence.rawValue)|\(String(format: "%.2f", amount))" }
     let merchantKey: String
     /// Readable name, from the latest charge.
     let name: String
@@ -149,14 +151,17 @@ enum SubscriptionService {
             $0.amount < 0 && !$0.isTransfer && !excludedCategories.contains($0.category)
                 && $0.date >= cutoff && $0.date < endOfToday
         }
-        var byMerchant: [String: [ChargeRow]] = [:]
+        // Per merchant and per account: the same service billed to two cards is two subscriptions.
+        struct Group: Hashable { let merchant: String; let accountId: String }
+        var byMerchant: [Group: [ChargeRow]] = [:]
         for c in charges {
             let key = MerchantNormalizer.key(for: c.name)
-            if !key.isEmpty { byMerchant[key, default: []].append(c) }
+            if !key.isEmpty { byMerchant[Group(merchant: key, accountId: c.accountId), default: []].append(c) }
         }
 
         var found: [DetectedSubscription] = []
-        for (key, list) in byMerchant {
+        for (group, list) in byMerchant {
+            let key = group.merchant
             for cluster in amountClusters(list) {
                 guard let s = recurring(cluster, merchantKey: key, today: today, calendar: calendar) else { continue }
                 // Two charges a quarter or a year apart are thin evidence: only believe it when the price is
@@ -240,11 +245,14 @@ enum SubscriptionService {
 
     /// Your saved decision for a detected charge, if any: same merchant and cadence, closest amount within tolerance.
     static func match(_ s: DetectedSubscription, in marks: [SubscriptionMark]) -> SubscriptionMark? {
-        marks.filter { m in
-            m.merchantKey == s.merchantKey && m.cadenceRaw == s.cadence.rawValue
-                && abs(m.amount - s.amount) <= max(m.amount * amountTolerance, 1)
-        }
+        marks.filter { matches($0, s) }
         .min { (abs($0.amount - s.amount), -$0.updatedAt.timeIntervalSince1970) < (abs($1.amount - s.amount), -$1.updatedAt.timeIntervalSince1970) }
+    }
+
+    private static func matches(_ m: SubscriptionMark, _ s: DetectedSubscription) -> Bool {
+        m.merchantKey == s.merchantKey && m.cadenceRaw == s.cadence.rawValue
+            && (m.accountId.isEmpty || m.accountId == s.accountId)
+            && abs(m.amount - s.amount) <= max(m.amount * amountTolerance, 1)
     }
 
     /// Detect from stored transactions.
@@ -260,15 +268,27 @@ enum SubscriptionService {
     @MainActor
     static func set(_ status: SubscriptionStatus, for s: DetectedSubscription, in context: ModelContext, now: Date = Date()) {
         let marks = (try? context.fetch(FetchDescriptor<SubscriptionMark>())) ?? []
-        let existing = marks.filter { m in
-            m.merchantKey == s.merchantKey && m.cadenceRaw == s.cadence.rawValue
-                && abs(m.amount - s.amount) <= max(m.amount * amountTolerance, 1)
-        }
+        let existing = marks.filter { matches($0, s) }
         for m in existing { context.delete(m) }
         if status != .unreviewed {
-            context.insert(SubscriptionMark(merchantKey: s.merchantKey, cadence: s.cadence, amount: s.amount, status: status, now: now))
+            context.insert(SubscriptionMark(merchantKey: s.merchantKey, accountId: s.accountId, cadence: s.cadence, amount: s.amount, status: status, now: now))
         }
         try? context.save()
+    }
+
+    /// Subscriptions grouped by the account they're charged to, biggest monthly cost first.
+    struct AccountGroup: Identifiable {
+        var id: String { accountId }
+        let accountId: String
+        let accountName: String
+        let items: [DetectedSubscription]
+        var totals: (monthly: Double, annual: Double) { SubscriptionService.totals(items) }
+    }
+    static func byAccount(_ list: [DetectedSubscription]) -> [AccountGroup] {
+        Dictionary(grouping: list, by: \.accountId).map { id, items in
+            AccountGroup(accountId: id, accountName: items.first?.accountName ?? id, items: items)
+        }
+        .sorted { ($0.totals.monthly, $1.accountName) > ($1.totals.monthly, $0.accountName) }
     }
 
     /// Estimated cost of the charges that count: confirmed or not yet reviewed, and still going.

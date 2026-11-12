@@ -8,6 +8,8 @@ struct SubscriptionsList: View {
     @Query private var marks: [SubscriptionMark]
     @Environment(\.modelContext) private var context
     @State private var showDismissed = false
+    /// Group the list by card / bank account instead of by review status (saved on this phone).
+    @AppStorage("subscriptions.byAccount") private var byAccount = false
 
     private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
     private func day(_ d: Date) -> String { d.formatted(.dateTime.month(.abbreviated).day()) }
@@ -38,11 +40,33 @@ struct SubscriptionsList: View {
             if all.isEmpty {
                 Text("No recurring charges found yet.").foregroundStyle(.secondary)
             }
-            if !review.isEmpty {
-                Section("To review") { ForEach(review) { row($0) } }
+            if !all.isEmpty {
+                Picker("Group", selection: $byAccount) {
+                    Text("By status").tag(false)
+                    Text("By account").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .listRowBackground(Color.clear)
             }
-            if !confirmed.isEmpty {
-                Section("Confirmed") { ForEach(confirmed) { row($0) } }
+            if byAccount {
+                ForEach(SubscriptionService.byAccount(review + confirmed)) { g in
+                    Section {
+                        ForEach(g.items) { row($0) }
+                    } header: {
+                        HStack {
+                            Text(g.accountName)
+                            Spacer()
+                            Text("\(money(g.totals.monthly))/mo").monospacedDigit()
+                        }
+                    }
+                }
+            } else {
+                if !review.isEmpty {
+                    Section("To review") { ForEach(review) { row($0) } }
+                }
+                if !confirmed.isEmpty {
+                    Section("Confirmed") { ForEach(confirmed) { row($0) } }
+                }
             }
             if !dismissed.isEmpty {
                 Section {
@@ -73,6 +97,11 @@ struct SubscriptionsList: View {
                     }
                     Text("\(s.cadence.label) • last \(day(s.lastCharge)) • next \(day(s.nextExpected))")
                         .font(.caption).foregroundStyle(.secondary)
+                    if !byAccount {
+                        Text(s.accountName).font(.caption2).foregroundStyle(.secondary)
+                    } else if s.status == .confirmed {
+                        Text("Confirmed").font(.caption2).foregroundStyle(.green)
+                    }
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {

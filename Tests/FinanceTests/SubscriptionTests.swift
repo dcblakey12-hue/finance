@@ -71,6 +71,23 @@ final class SubscriptionTests: XCTestCase {
         XCTAssertEqual(found.map(\.amount).sorted(), [2.99, 10.99])
     }
 
+    func testSameServiceOnTwoCardsIsTwoSubscriptionsGroupedByAccount() {
+        var rows: [ChargeRow] = (5...10).map {
+            ChargeRow(name: "STREAMFLIX", amount: -15.49, date: date(2026, $0, 7), category: "Entertainment", accountId: "VISA", accountName: "Visa")
+        }
+        rows += (5...10).map {
+            ChargeRow(name: "STREAMFLIX", amount: -15.49, date: date(2026, $0, 9), category: "Entertainment", accountId: "MC", accountName: "Mastercard")
+        }
+        rows += (5...10).map {
+            ChargeRow(name: "SKYLINE FIBER", amount: -69.99, date: date(2026, $0, 22), category: "Utilities", accountId: "CHK", accountName: "Checking")
+        }
+        let found = SubscriptionService.detect(rows, today: today, calendar: cal)
+        XCTAssertEqual(found.filter { $0.merchantKey == "STREAMFLIX" }.map(\.accountId).sorted(), ["MC", "VISA"])
+        let groups = SubscriptionService.byAccount(found)
+        XCTAssertEqual(groups.map(\.accountName), ["Checking", "Mastercard", "Visa"])
+        XCTAssertEqual(groups[0].totals.monthly, 69.99, accuracy: 0.001)
+    }
+
     func testStoppedChargeIsFlaggedAndLeftOutOfTotals() {
         let rows = (5...8).map { charge("FITTRACK PREMIUM", -7.99, date(2026, $0, 4)) }
         let found = SubscriptionService.detect(rows, today: today, calendar: cal)
