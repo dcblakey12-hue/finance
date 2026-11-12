@@ -18,6 +18,7 @@ enum SubscriptionFilter: String, CaseIterable, Identifiable {
 /// Sidebar section: recurring charges found in your transactions that look like subscriptions.
 struct SubscriptionsView: View {
     @Query private var transactions: [TransactionRecord]
+    @Query private var accounts: [Account]
     @Query private var marks: [SubscriptionMark]
     @Environment(\.modelContext) private var context
     @State private var filter: SubscriptionFilter = .active
@@ -30,7 +31,7 @@ struct SubscriptionsView: View {
     private func day(_ d: Date) -> String { d.formatted(.dateTime.month(.abbreviated).day().year()) }
 
     var body: some View {
-        let all = SubscriptionService.detect(transactions: transactions, marks: marks)
+        let all = SubscriptionService.detect(transactions: CashFlowScope.transactions(transactions, accounts: accounts), marks: marks)
         let listed = all.filter { filter.includes($0) }
         let groups = SubscriptionService.byAccount(listed)
         let shown = listed.filter { accountFilter == nil || $0.accountId == accountFilter }

@@ -22,6 +22,10 @@ extension AccountType {
     /// not cash: it is left out of cash balances, running balances and the cash flow forecast.
     var isPropertyValue: Bool { self == .property }
 
+    /// Whether a new account of this type counts toward spending, income and cash flow until you
+    /// change it. Mortgages (escrow, property tax) and property values are left out by default.
+    var countsInCashFlowByDefault: Bool { self != .mortgage && self != .property }
+
     /// Group items by account type in `displayOrder`, skipping types with no accounts.
     /// Items keep their incoming order within each group.
     static func grouped<Item>(_ items: [Item], by type: (Item) -> AccountType) -> [AccountGroup<Item>] {
@@ -41,12 +45,45 @@ final class Account {
     var accountId: String = ""  // OFX ACCTID
     var bankName: String = ""
     var balance: Double = 0
+    /// Your choice for "Include in spending & cash flow". Nil = the account type's default
+    /// (see `AccountType.countsInCashFlowByDefault`). Optional so older data and backups need no migration.
+    var cashFlowOverride: Bool? = nil
 
-    init(id: UUID = UUID(), name: String, type: AccountType, accountId: String, bankName: String, balance: Double = 0) {
+    init(id: UUID = UUID(), name: String, type: AccountType, accountId: String, bankName: String, balance: Double = 0,
+         cashFlowOverride: Bool? = nil) {
         self.id = id; self.name = name; self.typeRaw = type.rawValue
         self.accountId = accountId; self.bankName = bankName; self.balance = balance
+        self.cashFlowOverride = cashFlowOverride
     }
     var type: AccountType { AccountType(rawValue: typeRaw) ?? .checking }
+
+    /// Whether this account's transactions count in spending, income, category totals, budgets,
+    /// forecasts and subscriptions. Net worth, balances and account lists always include every account.
+    var countsInCashFlow: Bool {
+        get { cashFlowOverride ?? type.countsInCashFlowByDefault }
+        set { cashFlowOverride = newValue == type.countsInCashFlowByDefault ? nil : newValue }
+    }
+}
+
+/// Keeps accounts you've left out of cash flow (e.g. a mortgage paying escrow and property tax)
+/// out of spending, income and forecasts, while net worth still counts them.
+enum CashFlowScope {
+    /// OFX accountIds of accounts left out of spending and cash flow.
+    @MainActor static func excludedIds(_ accounts: [Account]) -> Set<String> {
+        Set(accounts.filter { !$0.countsInCashFlow }.map(\.accountId))
+    }
+    /// The transactions that count toward spending, income and cash flow.
+    @MainActor static func transactions(_ txs: [TransactionRecord], accounts: [Account]) -> [TransactionRecord] {
+        let out = excludedIds(accounts)
+        return out.isEmpty ? txs : txs.filter { !out.contains($0.accountId) }
+    }
+    /// The accounts a forecast should cover: `selected` (nil = all) minus excluded ones.
+    /// Nil when nothing is excluded and nothing is picked, meaning every account.
+    @MainActor static func accountIds(selected: Set<String>?, accounts: [Account]) -> Set<String>? {
+        let out = excludedIds(accounts)
+        guard !out.isEmpty else { return selected }
+        return (selected ?? Set(accounts.map(\.accountId))).subtracting(out)
+    }
 }
 
 @Model

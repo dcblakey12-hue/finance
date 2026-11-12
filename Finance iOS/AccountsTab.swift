@@ -4,6 +4,7 @@ import SwiftData
 struct AccountsTab: View {
     @Query(sort: \Account.name) private var accounts: [Account]
     @Query private var transactions: [TransactionRecord]
+    @Environment(\.modelContext) private var context
     private var book: BalanceBook { BalanceBook(transactions: transactions) }
 
     private var groups: [AccountGroup<Account>] { AccountType.grouped(accounts, by: { $0.type }) }
@@ -22,16 +23,28 @@ struct AccountsTab: View {
                                     VStack(alignment: .leading) {
                                         Text(a.name)
                                         if !a.bankName.isEmpty { Text(a.bankName).font(.caption).foregroundStyle(.secondary) }
+                                        if !a.countsInCashFlow {
+                                            Text("Not in spending or cash flow").font(.caption2).foregroundStyle(.secondary)
+                                        }
                                     }
                                     Spacer()
                                     Text(money(book.today(a))).monospacedDigit()
                                         .foregroundStyle(book.today(a) < 0 ? .red : .primary)
                                 }
                             }
+                            .contextMenu {
+                                Toggle("Include in spending & cash flow", isOn: Binding(
+                                    get: { a.countsInCashFlow }, set: { a.countsInCashFlow = $0; try? context.save() }))
+                            }
                         }
                     } header: {
                         HStack { Text(label(group.type)); Spacer()
                             Text(money(book.today(group.items))).monospacedDigit() }
+                    }
+                }
+                if !accounts.isEmpty {
+                    Section {} footer: {
+                        Text("Touch and hold an account to choose whether it counts in spending and cash flow. Net worth always includes every account.")
                     }
                 }
                 if accounts.isEmpty {

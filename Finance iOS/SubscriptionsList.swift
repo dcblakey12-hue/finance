@@ -5,6 +5,7 @@ import SwiftData
 /// Swipe right to confirm one, left to dismiss it; choices sync with the Mac.
 struct SubscriptionsList: View {
     @Query private var transactions: [TransactionRecord]
+    @Query private var accounts: [Account]
     @Query private var marks: [SubscriptionMark]
     @Environment(\.modelContext) private var context
     @State private var showDismissed = false
@@ -15,7 +16,7 @@ struct SubscriptionsList: View {
     private func day(_ d: Date) -> String { d.formatted(.dateTime.month(.abbreviated).day()) }
 
     var body: some View {
-        let all = SubscriptionService.detect(transactions: transactions, marks: marks)
+        let all = SubscriptionService.detect(transactions: CashFlowScope.transactions(transactions, accounts: accounts), marks: marks)
         let totals = SubscriptionService.totals(all)
         let review = all.filter { $0.status == .unreviewed }
         let confirmed = all.filter { $0.status == .confirmed }

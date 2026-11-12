@@ -1213,3 +1213,73 @@ final class PropertyAccountTests: XCTestCase {
         XCTAssertEqual(groups.map(\.type), [.checking, .property])
     }
 }
+
+@MainActor
+final class CashFlowScopeTests: XCTestCase {
+    private var context: ModelContext!
+    override func setUp() async throws {
+        let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        context = ModelContext(container)
+    }
+
+    private func tx(_ acct: String, _ amount: Double, _ category: String) -> TransactionRecord {
+        TransactionRecord(fitid: UUID().uuidString, accountId: acct, accountName: acct, date: Date(),
+                          name: category, amount: amount, type: amount < 0 ? .debit : .credit, category: category)
+    }
+
+    func testMortgageAndPropertyLeftOutByDefault() {
+        XCTAssertTrue(Account(name: "C", type: .checking, accountId: "c", bankName: "").countsInCashFlow)
+        XCTAssertTrue(Account(name: "V", type: .creditCard, accountId: "v", bankName: "").countsInCashFlow)
+        XCTAssertFalse(Account(name: "M", type: .mortgage, accountId: "m", bankName: "").countsInCashFlow)
+        XCTAssertFalse(Account(name: "H", type: .property, accountId: "h", bankName: "").countsInCashFlow)
+    }
+
+    func testOverrideWinsAndMatchingDefaultClearsIt() {
+        let m = Account(name: "M", type: .mortgage, accountId: "m", bankName: "")
+        m.countsInCashFlow = true
+        XCTAssertEqual(m.cashFlowOverride, true)
+        m.countsInCashFlow = false
+        XCTAssertNil(m.cashFlowOverride)
+        let c = Account(name: "C", type: .checking, accountId: "c", bankName: "")
+        c.countsInCashFlow = false
+        XCTAssertFalse(c.countsInCashFlow)
+    }
+
+    func testSpendingLeavesOutExcludedAccountsButNetWorthKeepsThem() {
+        let accounts = [Account(name: "C", type: .checking, accountId: "c", bankName: "", balance: 1000),
+                        Account(name: "M", type: .mortgage, accountId: "m", bankName: "", balance: -200_000)]
+        let txs = [tx("c", -50, "Groceries"), tx("m", -2140, "Housing")]
+        let flow = CashFlowScope.transactions(txs, accounts: accounts)
+        XCTAssertEqual(flow.map(\.accountId), ["c"])
+        let totals = SpendingReport.totals(flow.map { ($0.category, $0.amount, $0.date) }, period: .last30Days)
+        XCTAssertEqual(totals.expenses, 50, accuracy: 0.001)
+        XCTAssertEqual(BudgetService.spent(for: "Housing", year: Calendar.current.component(.year, from: Date()),
+                                           month: Calendar.current.component(.month, from: Date()), transactions: flow), 0)
+        // Net worth still adds every account.
+        XCTAssertEqual(accounts.reduce(0) { $0 + $1.balance }, -199_000)
+        XCTAssertEqual(CashFlowScope.accountIds(selected: nil, accounts: accounts), ["c"])
+        XCTAssertNil(CashFlowScope.accountIds(selected: nil, accounts: [accounts[0]]))
+    }
+
+    func testBackupKeepsSettingAndOldBackupsStillRestore() throws {
+        let m = Account(name: "M", type: .mortgage, accountId: "m", bankName: "")
+        m.countsInCashFlow = true
+        context.insert(m)
+        try context.save()
+        let back = try BackupService.decode(BackupService.encode(BackupService.snapshot(in: context)))
+        XCTAssertEqual(back.accounts.first?.cashFlowOverride, true)
+
+        // A backup written before the setting existed has no cashFlowOverride key.
+        var json = try JSONSerialization.jsonObject(with: BackupService.encode(back)) as! [String: Any]
+        json["accounts"] = (json["accounts"] as! [[String: Any]]).map { var a = $0; a.removeValue(forKey: "cashFlowOverride"); return a }
+        let old = try BackupService.decode(JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(old.accounts.first?.cashFlowOverride)
+        BackupService.wipe(in: context)
+        BackupService.restore(old, in: context)
+        let restored = try context.fetch(FetchDescriptor<Account>())
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertFalse(restored[0].countsInCashFlow)   // falls back to the mortgage default
+    }
+}

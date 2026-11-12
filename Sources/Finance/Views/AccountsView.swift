@@ -25,6 +25,9 @@ struct AccountsView: View {
                             VStack(alignment: .leading) {
                                 Text(a.name).font(.headline)
                                 Text("\(a.bankName) •••\(a.accountId.suffix(4))").font(.caption).foregroundStyle(.secondary)
+                                if !a.countsInCashFlow {
+                                    Text("Not in spending or cash flow").font(.caption2).foregroundStyle(.secondary)
+                                }
                             }
                             Spacer()
                             Text(currency.string(from: NSNumber(value: book.today(a))) ?? "$0").monospacedDigit()
@@ -46,6 +49,8 @@ struct AccountsView: View {
             if let a = account(for: ids) {
                 Button("Show Transactions") { onOpenTransactions(a.accountId) }
                 Button("Edit…") { editor = AccountEditor(account: a) }
+                Toggle("Include in Spending & Cash Flow", isOn: Binding(
+                    get: { a.countsInCashFlow }, set: { a.countsInCashFlow = $0; try? context.save() }))
                 Divider()
                 Button("Delete…", role: .destructive) { pendingDelete = a }
             }
@@ -119,12 +124,15 @@ struct AccountsView: View {
             let oldId = a.accountId
             a.name = r.name; a.typeRaw = r.type.rawValue; a.bankName = r.bankName
             a.accountId = r.accountId; a.balance = r.balance
+            a.countsInCashFlow = r.countsInCashFlow
             // Keep transactions linked to the account and showing its current name.
             for tx in transactions where tx.accountId == oldId {
                 tx.accountId = r.accountId; tx.accountName = r.name
             }
         } else {
-            context.insert(Account(name: r.name, type: r.type, accountId: r.accountId, bankName: r.bankName, balance: r.balance))
+            let a = Account(name: r.name, type: r.type, accountId: r.accountId, bankName: r.bankName, balance: r.balance)
+            a.countsInCashFlow = r.countsInCashFlow
+            context.insert(a)
         }
         try? context.save()
     }
@@ -159,7 +167,10 @@ struct AccountEditor: Identifiable {
     let id = UUID()
     let account: Account?   // nil = adding a new account
 
-    struct Result { var name: String; var type: AccountType; var bankName: String; var accountId: String; var balance: Double }
+    struct Result {
+        var name: String; var type: AccountType; var bankName: String; var accountId: String; var balance: Double
+        var countsInCashFlow: Bool = true
+    }
 }
 
 private struct AccountEditorSheet: View {
@@ -173,6 +184,7 @@ private struct AccountEditorSheet: View {
     @State private var bankName = ""
     @State private var accountId = ""
     @State private var balance = ""
+    @State private var countsInCashFlow = true
 
     enum Field: Hashable { case name, bank, accountId, balance }
     @FocusState private var focusedField: Field?
@@ -190,7 +202,8 @@ private struct AccountEditorSheet: View {
                     .onSubmit { focusedField = .bank }
             }
             field("Type") {
-                Picker("Type", selection: $type) {
+                // Picking a type suggests its default (mortgages and property start out left out).
+                Picker("Type", selection: Binding(get: { type }, set: { type = $0; countsInCashFlow = $0.countsInCashFlowByDefault })) {
                     ForEach(AccountType.allCases, id: \.self) { Text(accountTypeLabel($0)).tag($0) }
                 }.labelsHidden()
             }
@@ -211,6 +224,11 @@ private struct AccountEditorSheet: View {
                     .focused($focusedField, equals: .balance)
                     .onSubmit { submit() }
             }
+            VStack(alignment: .leading, spacing: 2) {
+                Toggle("Include in spending & cash flow", isOn: $countsInCashFlow)
+                Text("Turn off for accounts like a mortgage that pays escrow and property tax. They still count in net worth and balances.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Spacer()
                 Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
@@ -228,8 +246,10 @@ private struct AccountEditorSheet: View {
             if let a = editor.account {
                 name = a.name; type = a.type; bankName = a.bankName; accountId = a.accountId
                 balance = String(format: "%.2f", a.balance)
+                countsInCashFlow = a.countsInCashFlow
             } else {
                 bankName = "Manual"
+                countsInCashFlow = type.countsInCashFlowByDefault
             }
             // Sheet + window must be key, then put cursor in Name.
             if let window = NSApp.keyWindow ?? NSApp.windows.first { window.makeKeyAndOrderFront(nil) }
@@ -251,6 +271,6 @@ private struct AccountEditorSheet: View {
         // A property has no bank ID: give it its own.
         let id = (type == .property && accountId.isEmpty) ? "property-\(UUID().uuidString.prefix(8))" : accountId
         onSave(.init(name: name, type: type, bankName: bankName.isEmpty ? "Manual" : bankName,
-                     accountId: id, balance: Double(cleanedBalance) ?? 0))
+                     accountId: id, balance: Double(cleanedBalance) ?? 0, countsInCashFlow: countsInCashFlow))
     }
 }
