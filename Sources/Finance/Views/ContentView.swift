@@ -72,6 +72,7 @@ struct ContentView: View {
             CategoryService.seedIfNeeded(in: context)
             DedupeService.run(in: context)
             ScheduleService.ensureTracking(in: context)
+            ScheduleService.reconcileRecent(in: context)   // payments that arrived early or late
             sync.syncIfStale(in: context)      // sync automatically when the app opens
         }
         .onChange(of: scenePhase) { _, phase in
