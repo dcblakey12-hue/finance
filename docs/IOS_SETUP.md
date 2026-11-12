@@ -8,6 +8,7 @@ The phone app's code is in `Finance iOS/`. It shares these files with the Mac ap
 - `Sources/Finance/Services/CategorizationService.swift`
 - `Sources/Finance/Services/ScheduleService.swift`
 - `Sources/Finance/Services/ForecastService.swift`
+- `Sources/Finance/Services/SubscriptionService.swift`
 
 Steps:
 1. File → New → Target… → iOS → App. Product name `Finance iOS`, team = yours, Interface SwiftUI,

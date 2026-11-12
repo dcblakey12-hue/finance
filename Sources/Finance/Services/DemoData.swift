@@ -254,6 +254,12 @@ enum DemoData {
             var day = start
             var monthIndex = 0
             let anchor = payAnchor
+            // A yearly subscription, charged twice before the history above starts (so it can be spotted).
+            for monthsBack in [23, 11] {
+                if let d = cal.date(byAdding: .month, value: -monthsBack, to: today) {
+                    add(DemoData.travelMC, days(19, from: d), "CLOUDNEST STORAGE ANNUAL", -99.99, "Other")
+                }
+            }
             while day <= today {
                 let d = cal.component(.day, from: day)
                 let weekday = cal.component(.weekday, from: day)   // 1 = Sunday
@@ -315,7 +321,11 @@ enum DemoData {
                 if chance(0.05) { add(DemoData.visa, day, "CINEPLEX 8", -amt(24, 38), "Entertainment") }
                 if on(7) { add(DemoData.visa, day, "STREAMFLIX", -15.49, "Entertainment", schedule: "StreamFlix") }
                 if on(12) { add(DemoData.visa, day, "ORBIT WIRELESS", -84.12, "Utilities", schedule: "Phone") }
-                if on(14) { add(DemoData.visa, day, "TUNEBOX MUSIC", -10.99, "Entertainment") }
+                // Subscriptions that aren't scheduled, for the Subscriptions screen to find:
+                // a price rise, a weekly one, and one that stopped a few months ago.
+                if on(14) { add(DemoData.visa, day, "TUNEBOX MUSIC", monthsAgo <= 1 ? -11.99 : -10.99, "Entertainment") }
+                if weekday == 2 { add(DemoData.visa, day, "MORNING LEDGER DIGITAL", -3.99, "Entertainment") }
+                if monthsAgo >= 3 && on(4) { add(DemoData.visa, day, "FITTRACK PREMIUM", -7.99, "Health") }
                 if monthsAgo == 2 && on(11) { add(DemoData.visa, day, "RIVERSIDE DENTAL", -145.00, "Health") }
 
                 // Cash and the travel card

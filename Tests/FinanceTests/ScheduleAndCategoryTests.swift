@@ -73,7 +73,7 @@ final class CategoryServiceTests: XCTestCase {
 
     override func setUp() async throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
         container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         context = ModelContext(container)
     }
@@ -378,7 +378,7 @@ final class TransferLinkTests: XCTestCase {
 
     override func setUp() async throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
         container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         context = ModelContext(container)
     }
@@ -487,7 +487,7 @@ final class BudgetSyncTests: XCTestCase {
     private var context: ModelContext!
     override func setUp() async throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         context = ModelContext(container)
     }
@@ -604,7 +604,7 @@ final class DedupeServiceTests: XCTestCase {
     private var context: ModelContext!
     override func setUp() async throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         context = ModelContext(container)
     }
@@ -646,7 +646,7 @@ final class ManualTransactionTests: XCTestCase {
     private var context: ModelContext!
     override func setUp() async throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         context = ModelContext(container)
     }
@@ -792,7 +792,7 @@ final class ScheduleRuleTests: XCTestCase {
 final class SchedulePersistenceTests: XCTestCase {
     func testSaveStoresFrequencyAndNextDateUsesIt() throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         let context = ModelContext(container)
         let anchor = Calendar.current.date(byAdding: .day, value: -3, to: Date())!
@@ -813,7 +813,7 @@ final class ScheduleEntryTests: XCTestCase {
     private var context: ModelContext!
     override func setUp() async throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         context = ModelContext(container)
     }
@@ -895,7 +895,7 @@ final class OverdueTests: XCTestCase {
     private var cal: Calendar { Calendar.current }
     override func setUp() async throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         context = ModelContext(container)
     }
@@ -973,7 +973,7 @@ final class ScheduleAccountTests: XCTestCase {
 
     func testSaveStoresAccountAndTransactionDraftCarriesIt() throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         let context = ModelContext(container)
         let draft = ScheduleService.draft(fromName: "NETFLIX.COM", amount: -15.49, date: Date(), category: "Entertainment", accountId: "visa")
