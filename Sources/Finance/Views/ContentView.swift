@@ -3,7 +3,7 @@ import SwiftData
 
 enum AppSection: String, CaseIterable, Identifiable {
     case dashboard = "Dashboard", accounts = "Accounts", transactions = "Transactions",
-         budget = "Budget", scheduled = "Scheduled Transactions", subscriptions = "Subscriptions", calendar = "Bills & Calendar", forecast = "Cash Flow Forecast", importData = "Import & Sync", settings = "Settings"
+         budget = "Budget", scheduled = "Scheduled Transactions", subscriptions = "Subscriptions", calendar = "Bills & Calendar", forecast = "Cash Flow Forecast", yearInReview = "Year in Review", reports = "Reports", importData = "Import & Sync", settings = "Settings"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -15,6 +15,8 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .subscriptions: return "repeat.circle"
         case .calendar: return "calendar"
         case .forecast: return "chart.line.uptrend.xyaxis"
+        case .yearInReview: return "sparkles.rectangle.stack"
+        case .reports: return "doc.text.magnifyingglass"
         case .importData: return "square.and.arrow.down.on.square"
         case .settings: return "gearshape"
         }
@@ -61,6 +63,13 @@ struct ContentView: View {
                 case .subscriptions: SubscriptionsView()
                 case .calendar: CalendarView()
                 case .forecast: ForecastView(onOpenTransactions: { openTransactions($0) })
+                case .yearInReview:
+                    YearInReviewView(onOpenCategory: { category, year in
+                        let now = Calendar.current.component(.year, from: Date())
+                        let period: DashboardPeriod = year == now ? .thisYear : (year == now - 1 ? .lastYear : .allTime)
+                        openTransactions(TransactionFilters(category: category, period: period))
+                    })
+                case .reports: ReportsView()
                 case .importData: ImportView()
                 case .settings: SettingsView()
                 }

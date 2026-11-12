@@ -204,6 +204,23 @@ struct OverviewTab: View {
                             }
                             .buttonStyle(.plain)
                         }
+                        case .reports:
+                        card("Look back") {
+                            NavigationLink { ReportsScreen(yearInReview: true) } label: {
+                                HStack {
+                                    Label("\(String(Calendar.current.component(.year, from: Date()))) in Review", systemImage: "sparkles.rectangle.stack")
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                                }
+                            }.buttonStyle(.plain)
+                            NavigationLink { ReportsScreen(yearInReview: false) } label: {
+                                HStack {
+                                    Label("Reports and export", systemImage: "doc.text.magnifyingglass")
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                                }
+                            }.buttonStyle(.plain)
+                        }
                         case .cloud:
                         card("iCloud sync") {
                             Button { cloud.checkNow(context: context) } label: {
@@ -300,7 +317,7 @@ struct OverviewTab: View {
 }
 
 enum OverviewCard: String, CaseIterable, Identifiable {
-    case tiles, cash, coming, netWorth, spending, subscriptions, cloud
+    case tiles, cash, coming, netWorth, spending, subscriptions, reports, cloud
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -310,6 +327,7 @@ enum OverviewCard: String, CaseIterable, Identifiable {
         case .netWorth: return "Net worth"
         case .spending: return "Spent in the last 30 days"
         case .subscriptions: return "Subscriptions"
+        case .reports: return "Year in Review and reports"
         case .cloud: return "iCloud sync"
         }
     }

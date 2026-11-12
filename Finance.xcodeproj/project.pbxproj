@@ -7,6 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5B5C0A1B0000000000000101 /* ReportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000010 /* ReportService.swift */; };
+		5B5C0A1B0000000000000102 /* ReportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000010 /* ReportService.swift */; };
+		5B5C0A1B0000000000000103 /* ReportsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000011 /* ReportsView.swift */; };
+		5B5C0A1B0000000000000104 /* YearInReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000012 /* YearInReviewView.swift */; };
+		5B5C0A1B0000000000000105 /* ReportPDF.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000013 /* ReportPDF.swift */; };
+		5B5C0A1B0000000000000106 /* ReportPDF.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000013 /* ReportPDF.swift */; };
+		5B5C0A1B0000000000000107 /* ReportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000014 /* ReportTests.swift */; };
 		08AAD6BA28CF0019FCE6BF3D /* ScheduleAndCategoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C68FA07408923BA45C57D27 /* ScheduleAndCategoryTests.swift */; };
 		13149FA5B9AAECFF39F24175 /* ScheduleService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 089C8FB08398BD3B67513BF3 /* ScheduleService.swift */; };
 		1F28708D579E768A39EDC65A /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8E201A73BF8912E6968E30B /* Models.swift */; };
@@ -23,6 +30,7 @@
 		5B5C0A1B0000000000000003 /* SubscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000001 /* SubscriptionService.swift */; };
 		5B5C0A1B0000000000000004 /* SubscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000001 /* SubscriptionService.swift */; };
 		5B5C0A1B0000000000000005 /* SubscriptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000002 /* SubscriptionsView.swift */; };
+		5B5C0A1B0000000000000007 /* SubscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000006 /* SubscriptionTests.swift */; };
 		63DF1BB72CEEA18CB6ECD2ED /* Services.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5564DC3C39BEA041A73F7F59 /* Services.swift */; };
 		7A1C0E5B2D3F4A6B8C9D0E11 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 495923EF309FDD1F009B93EA /* Assets.xcassets */; };
 		8CFF2BC649F61ABC3AAD147B /* CategoryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C07B21EFDB8956BCA637928B /* CategoryViews.swift */; };
@@ -43,7 +51,6 @@
 		DC3D94FECF723B55976046D7 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 485883D43B4EB32FBE31E970 /* SettingsView.swift */; };
 		E5A734C78CD86F551F76BF72 /* ForecastService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA6EB2CEEA70D3F7B30E17B /* ForecastService.swift */; };
 		E772B10D963422D3A2E21810 /* BudgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71BB55ED234FAFD2B60FE3AA /* BudgetView.swift */; };
-		5B5C0A1B0000000000000007 /* SubscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5C0A1B0000000000000006 /* SubscriptionTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,6 +64,11 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		5B5C0A1B0000000000000010 /* ReportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportService.swift; sourceTree = "<group>"; };
+		5B5C0A1B0000000000000011 /* ReportsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsView.swift; sourceTree = "<group>"; };
+		5B5C0A1B0000000000000012 /* YearInReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YearInReviewView.swift; sourceTree = "<group>"; };
+		5B5C0A1B0000000000000013 /* ReportPDF.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportPDF.swift; sourceTree = "<group>"; };
+		5B5C0A1B0000000000000014 /* ReportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportTests.swift; sourceTree = "<group>"; };
 		089C8FB08398BD3B67513BF3 /* ScheduleService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleService.swift; sourceTree = "<group>"; };
 		0BB77645A27C2FB873E84847 /* Finance.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Finance.entitlements; sourceTree = "<group>"; };
 		0C68FA07408923BA45C57D27 /* ScheduleAndCategoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleAndCategoryTests.swift; sourceTree = "<group>"; };
@@ -73,6 +85,7 @@
 		5564DC3C39BEA041A73F7F59 /* Services.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services.swift; sourceTree = "<group>"; };
 		5B5C0A1B0000000000000001 /* SubscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionService.swift; sourceTree = "<group>"; };
 		5B5C0A1B0000000000000002 /* SubscriptionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionsView.swift; sourceTree = "<group>"; };
+		5B5C0A1B0000000000000006 /* SubscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionTests.swift; sourceTree = "<group>"; };
 		65F6C77F66458479535F63C2 /* TransactionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionsView.swift; sourceTree = "<group>"; };
 		71BB55ED234FAFD2B60FE3AA /* BudgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetView.swift; sourceTree = "<group>"; };
 		8CE49979191C30B45A273B07 /* ForecastView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForecastView.swift; sourceTree = "<group>"; };
@@ -92,7 +105,6 @@
 		E8E201A73BF8912E6968E30B /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		EAA6EB2CEEA70D3F7B30E17B /* ForecastService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForecastService.swift; sourceTree = "<group>"; };
 		FFFDF0DBB82276AB0EA3AF93 /* CashFlowForecastTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CashFlowForecastTests.swift; sourceTree = "<group>"; };
-		5B5C0A1B0000000000000006 /* SubscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -147,6 +159,7 @@
 				5564DC3C39BEA041A73F7F59 /* Services.swift */,
 				D3E0DA7A0000000000000001 /* DemoData.swift */,
 				5B5C0A1B0000000000000001 /* SubscriptionService.swift */,
+				5B5C0A1B0000000000000010 /* ReportService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -166,6 +179,9 @@
 				485883D43B4EB32FBE31E970 /* SettingsView.swift */,
 				65F6C77F66458479535F63C2 /* TransactionsView.swift */,
 				5B5C0A1B0000000000000002 /* SubscriptionsView.swift */,
+				5B5C0A1B0000000000000011 /* ReportsView.swift */,
+				5B5C0A1B0000000000000012 /* YearInReviewView.swift */,
+				5B5C0A1B0000000000000013 /* ReportPDF.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -197,6 +213,7 @@
 				0C68FA07408923BA45C57D27 /* ScheduleAndCategoryTests.swift */,
 				D3E0DA7A0000000000000003 /* DemoDataTests.swift */,
 				5B5C0A1B0000000000000006 /* SubscriptionTests.swift */,
+				5B5C0A1B0000000000000014 /* ReportTests.swift */,
 				9804B22AFEDC7F130BAD9903 /* OFXParserTests.swift */,
 			);
 			name = FinanceTests;
@@ -354,6 +371,7 @@
 				08AAD6BA28CF0019FCE6BF3D /* ScheduleAndCategoryTests.swift in Sources */,
 				D3E0DA7A0000000000000004 /* DemoDataTests.swift in Sources */,
 				5B5C0A1B0000000000000007 /* SubscriptionTests.swift in Sources */,
+				5B5C0A1B0000000000000107 /* ReportTests.swift in Sources */,
 				433F2BC28466666AD79D2C47 /* OFXParserTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -369,6 +387,8 @@
 				495923EA309EE95D009B93EA /* ScheduleService.swift in Sources */,
 				D3E0DA7A0000000000000005 /* DemoData.swift in Sources */,
 				5B5C0A1B0000000000000004 /* SubscriptionService.swift in Sources */,
+				5B5C0A1B0000000000000102 /* ReportService.swift in Sources */,
+				5B5C0A1B0000000000000106 /* ReportPDF.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -398,6 +418,10 @@
 				C713FE4B142FBD42A8A78D6E /* TransactionsView.swift in Sources */,
 				5B5C0A1B0000000000000003 /* SubscriptionService.swift in Sources */,
 				5B5C0A1B0000000000000005 /* SubscriptionsView.swift in Sources */,
+				5B5C0A1B0000000000000101 /* ReportService.swift in Sources */,
+				5B5C0A1B0000000000000103 /* ReportsView.swift in Sources */,
+				5B5C0A1B0000000000000104 /* YearInReviewView.swift in Sources */,
+				5B5C0A1B0000000000000105 /* ReportPDF.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
