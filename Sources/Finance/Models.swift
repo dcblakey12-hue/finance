@@ -130,6 +130,82 @@ struct PlaidSyncStatus: Equatable {
     }
 }
 
+/// What a failed Plaid sync means in plain words, and what fixes it. Read from the stored error text,
+/// which ends with Plaid's code in brackets, e.g. "the login details of this item have changed (ITEM_LOGIN_REQUIRED)".
+struct PlaidProblem: Equatable {
+    enum Fix: Equatable {
+        /// Sign in to the bank again through Plaid (update mode): same connection, history kept.
+        case reconnect
+        /// Nothing to change on your side: try the sync again later.
+        case retry
+        /// The Plaid keys in Settings are wrong or for the other environment.
+        case checkKeys
+        /// The connection is gone at Plaid: remove it in Settings and connect the bank again.
+        case replace
+    }
+
+    var code: String?
+    var message: String
+    var fix: Fix
+
+    init(error: String?) {
+        let code = Self.code(in: error)
+        self.code = code
+        switch code {
+        case "ITEM_LOGIN_REQUIRED", "PENDING_EXPIRATION", "PENDING_DISCONNECT", "ITEM_CONSENT_EXPIRED",
+             "INVALID_CREDENTIALS", "INVALID_MFA", "INVALID_UPDATED_USERNAME", "ITEM_LOCKED",
+             "USER_SETUP_REQUIRED", "USER_INPUT_TIMEOUT", "MFA_NOT_SUPPORTED":
+            message = "Your bank needs you to sign in again before Plaid can download anything."
+            fix = .reconnect
+        case "ACCESS_NOT_GRANTED", "NO_ACCOUNTS", "USER_PERMISSION_REVOKED", "NO_AUTH_ACCOUNTS":
+            message = "The bank stopped sharing these accounts with Plaid. Reconnect and allow access to them again."
+            fix = .reconnect
+        case "INSTITUTION_DOWN", "INSTITUTION_NOT_RESPONDING", "INSTITUTION_NOT_AVAILABLE", "INSTITUTION_NO_LONGER_SUPPORTED",
+             "INTERNAL_SERVER_ERROR", "PLANNED_MAINTENANCE", "RATE_LIMIT_EXCEEDED", "PRODUCT_NOT_READY",
+             "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION", "ITEM_PRODUCT_NOT_READY":
+            message = "The bank or Plaid is having trouble right now. Nothing to fix on your side; try again later."
+            fix = .retry
+        case "INVALID_API_KEYS", "INVALID_SECRET", "INVALID_CLIENT_ID", "UNAUTHORIZED_ENVIRONMENT":
+            message = "Plaid didn't accept your keys. Check the client ID, secret and environment in Settings."
+            fix = .checkKeys
+        case "INVALID_ACCESS_TOKEN", "ITEM_NOT_FOUND":
+            message = "Plaid no longer knows this bank connection. Remove it in Settings and connect the bank again."
+            fix = .replace
+        default:
+            if error?.contains("missing its access token") == true {
+                message = "This Mac has lost the key for this bank connection. Remove it in Settings and connect the bank again."
+                fix = .replace
+            } else if error?.lowercased().contains("internet") == true || error?.lowercased().contains("timed out") == true
+                        || error?.lowercased().contains("network") == true {
+                message = "Couldn't reach Plaid. Check the internet connection and try again."
+                fix = .retry
+            } else {
+                message = "The last sync didn't work. Try again; if it keeps failing, reconnect the bank."
+                fix = .retry
+            }
+        }
+    }
+
+    /// The Plaid error code at the end of the message, if there is one.
+    static func code(in error: String?) -> String? {
+        guard let e = error?.trimmingCharacters(in: .whitespaces), e.hasSuffix(")"),
+              let open = e.lastIndex(of: "(") else { return nil }
+        let c = e[e.index(after: open)..<e.index(before: e.endIndex)]
+        guard !c.isEmpty, c.allSatisfy({ $0.isUppercase || $0 == "_" || $0.isNumber }) else { return nil }
+        return String(c)
+    }
+}
+
+extension PlaidSyncStatus {
+    /// Set when the last sync failed: what went wrong and how to fix it.
+    var problem: PlaidProblem? { level == .failed ? PlaidProblem(error: error) : nil }
+
+    /// Accounts whose last bank sync failed, for the Overview banner.
+    @MainActor static func needingAttention(_ accounts: [Account], now: Date = Date()) -> [Account] {
+        accounts.filter { PlaidSyncStatus($0, now: now)?.level == .failed }
+    }
+}
+
 /// Keeps accounts you've left out of cash flow (e.g. a mortgage paying escrow and property tax)
 /// out of spending, income and forecasts, while net worth still counts them.
 enum CashFlowScope {

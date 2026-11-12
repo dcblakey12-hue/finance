@@ -161,6 +161,7 @@ struct PlaidSettingsSection: View {
     @State private var busy = false
     @State private var linking: Task<Void, Never>?
     @State private var hasKeys = PlaidClient().hasKeys
+    @EnvironmentObject private var syncer: SyncCoordinator
 
     var body: some View {
         Section("Bank connections (Plaid)") {
@@ -204,11 +205,24 @@ struct PlaidSettingsSection: View {
                         Text(item.lastSync.map { "synced \($0.formatted(.relative(presentation: .named)))" } ?? "not synced yet")
                             .font(.caption).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Sync Now") { syncOne(item.itemId) }.disabled(busy)
+                        Button("Sync Now") { syncOne(item.itemId) }.disabled(busy || syncer.reconnecting != nil)
+                        Button("Reconnect…") { syncer.reconnect(item.itemId, in: context) }
+                            .disabled(busy || syncer.busy || syncer.reconnecting != nil)
+                            .help("Sign in to this bank again through Plaid when it asks for it. Keeps the same connection and history; no duplicates.")
                         Button("Remove", role: .destructive) {
                             PlaidStore.remove(item.itemId); items = PlaidStore.items()
                             PlaidSync.forgetUnlinked(in: context)
                         }
+                    }
+                    if syncer.reconnecting == item.itemId {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Finish signing in to \(item.institution) in your browser…").font(.caption)
+                            Button("Cancel") { syncer.cancelReconnect() }
+                        }
+                    } else if let problem = failure(of: item) {
+                        Label(problem.message, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundStyle(.orange)
                     }
                     ForEach(item.accounts) { pa in
                         Picker("\(pa.name)\(pa.mask.map { " ••\($0)" } ?? "")", selection: mapping(item.itemId, pa.accountId)) {
@@ -223,6 +237,12 @@ struct PlaidSettingsSection: View {
             }
             if !status.isEmpty { Text(status).font(.caption).foregroundStyle(.secondary) }
         }
+    }
+
+    /// What's wrong with a bank connection, if its accounts' last sync failed.
+    private func failure(of item: PlaidItem) -> PlaidProblem? {
+        let ids = PlaidSync.targets(of: item)
+        return accounts.lazy.filter { ids.contains($0.accountId) }.compactMap { PlaidSyncStatus($0)?.problem }.first
     }
 
     private func mapping(_ itemId: String, _ plaidAccount: String) -> Binding<String> {

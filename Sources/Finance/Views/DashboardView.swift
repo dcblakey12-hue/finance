@@ -100,6 +100,8 @@ struct DashboardView: View {
                     .disabled(allAccounts.isEmpty)
                 }
 
+                PlaidAttentionBanner(accounts: allAccounts)
+
                 if !overdue.isEmpty {
                     Label("\(overdue.count) scheduled payment\(overdue.count == 1 ? " is" : "s are") overdue — open Scheduled Transactions to enter or skip \(overdue.count == 1 ? "it" : "them").",
                           systemImage: "exclamationmark.triangle.fill")

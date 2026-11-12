@@ -2,6 +2,7 @@ import Foundation
 import Security
 import SwiftData
 import Combine
+import AppKit
 
 /// Direct OFX server client (OFXHome). Many banks no longer support this;
 /// file import is the reliable path. This client exists so both modes work
@@ -283,12 +284,15 @@ struct PlaidClient {
     }
 
     /// Start connecting a bank: returns the link token and the page to open in the browser.
-    func startLink() async throws -> (linkToken: String, url: URL) {
-        let r = try await call("/link/token/create", [
+    /// With an access token, Plaid opens in update mode instead: the person signs in to the same bank
+    /// again and the existing connection (and its history) carries on, with no new accounts.
+    func startLink(updating accessToken: String? = nil) async throws -> (linkToken: String, url: URL) {
+        var body: [String: Any] = [
             "client_name": "Finance", "language": "en", "country_codes": ["US"],
-            "user": ["client_user_id": "finance-mac"], "products": ["transactions"],
-            "hosted_link": [String: Any](),
-        ])
+            "user": ["client_user_id": "finance-mac"], "hosted_link": [String: Any](),
+        ]
+        if let accessToken { body["access_token"] = accessToken } else { body["products"] = ["transactions"] }
+        let r = try await call("/link/token/create", body)
         guard let tok = r["link_token"] as? String, let s = r["hosted_link_url"] as? String, let u = URL(string: s) else { throw PlaidError.badResponse }
         return (tok, u)
     }
@@ -308,6 +312,25 @@ struct PlaidClient {
             }
         }
         return nil
+    }
+
+    enum UpdateOutcome: Equatable { case waiting, done, exited(String?) }
+
+    /// How a reconnect (update mode) is going: still open, finished, or closed without finishing.
+    func updateOutcome(_ linkToken: String) async throws -> UpdateOutcome {
+        let r = try await call("/link/token/get", ["link_token": linkToken])
+        for session in (r["link_sessions"] as? [[String: Any]]) ?? [] {
+            if session["on_success"] is [String: Any] { return .done }
+            if let add = (session["results"] as? [String: Any])?["item_add_results"] as? [[String: Any]], !add.isEmpty { return .done }
+            let exit = (session["exit"] as? [String: Any]) ?? (session["on_exit"] as? [String: Any])
+            if let exit {
+                let err = exit["error"] as? [String: Any]
+                let msg = (err?["display_message"] as? String) ?? (err?["error_message"] as? String)
+                return .exited(msg)
+            }
+            if let f = session["finished_at"] as? String, !f.isEmpty { return .done }
+        }
+        return .waiting
     }
 
     func exchange(_ publicToken: String) async throws -> (accessToken: String, itemId: String) {
@@ -379,7 +402,7 @@ final class SyncCoordinator: ObservableObject {
     var hasBanks: Bool { !PlaidStore.items().isEmpty }
 
     func syncAll(in context: ModelContext) {
-        guard !busy, hasBanks else { return }
+        guard !busy, reconnecting == nil, hasBanks else { return }
         busy = true; status = "Syncing…"
         Task {
             var lines: [String] = []
@@ -395,6 +418,61 @@ final class SyncCoordinator: ObservableObject {
             if status == shown && !busy { status = "" }
         }
     }
+
+    /// The bank connection (Plaid item) that feeds an account, if this Mac has one.
+    func item(feeding account: Account) -> PlaidItem? {
+        PlaidStore.items().first { PlaidSync.targets(of: $0).contains(account.accountId) }
+    }
+
+    /// The bank being reconnected (its Plaid item ID), while the sign-in page is open.
+    @Published var reconnecting: String?
+    private var reconnectTask: Task<Void, Never>?
+
+    /// Fix a broken connection: open Plaid in update mode so the person signs in to the bank again,
+    /// then sync. The connection, its accounts and their history stay as they are.
+    func reconnect(_ itemId: String, in context: ModelContext) {
+        guard reconnecting == nil, !busy else { return }
+        guard let item = PlaidStore.items().first(where: { $0.itemId == itemId }) else { return }
+        guard let token = PlaidStore.token(for: itemId) else {
+            status = "\(item.institution): this Mac has lost the key for this connection. Remove it in Settings and connect again."
+            return
+        }
+        reconnecting = itemId
+        status = "Opening Plaid to reconnect \(item.institution)…"
+        reconnectTask = Task {
+            defer { reconnecting = nil; reconnectTask = nil }
+            let client = PlaidClient()
+            do {
+                let (linkToken, url) = try await client.startLink(updating: token)
+                NSWorkspace.shared.open(url)
+                status = "Sign in to \(item.institution) in your browser…"
+                for _ in 0..<300 {
+                    try await Task.sleep(nanoseconds: 3_000_000_000)
+                    switch try await client.updateOutcome(linkToken) {
+                    case .waiting: continue
+                    case .exited(let why):
+                        status = "\(item.institution) wasn't reconnected" + (why.map { ": \($0)" } ?? ". Try again when you're ready.")
+                        return
+                    case .done:
+                        status = "Reconnected \(item.institution). Syncing…"
+                        busy = true
+                        defer { busy = false }
+                        do { status = "Reconnected. " + (try await PlaidSync.sync(itemId, in: context)) }
+                        catch { status = "Reconnected \(item.institution), but the sync failed: \(error.localizedDescription)" }
+                        lastRun = Date()
+                        return
+                    }
+                }
+                status = "Timed out waiting for the bank sign-in. Try Reconnect again."
+            } catch is CancellationError {
+                status = "Reconnect cancelled."
+            } catch {
+                status = "Couldn't reconnect \(item.institution): \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func cancelReconnect() { reconnectTask?.cancel() }
 
     /// Automatic sync: at most once every `minutes`.
     func syncIfStale(minutes: Double = 30, in context: ModelContext) {

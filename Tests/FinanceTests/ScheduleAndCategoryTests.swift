@@ -1492,3 +1492,31 @@ final class PlaidSyncStatusTests: XCTestCase {
         XCTAssertNil(level(DemoData.k401.id))
     }
 }
+
+final class PlaidProblemTests: XCTestCase {
+    func testReadsCodeFromStoredError() {
+        XCTAssertEqual(PlaidProblem.code(in: "the login details of this item have changed (ITEM_LOGIN_REQUIRED)"), "ITEM_LOGIN_REQUIRED")
+        XCTAssertNil(PlaidProblem.code(in: "The Internet connection appears to be offline."))
+        XCTAssertNil(PlaidProblem.code(in: "Something (with words)"))
+        XCTAssertNil(PlaidProblem.code(in: nil))
+    }
+
+    func testFixForCommonErrors() {
+        XCTAssertEqual(PlaidProblem(error: "login changed (ITEM_LOGIN_REQUIRED)").fix, .reconnect)
+        XCTAssertEqual(PlaidProblem(error: "expiring (PENDING_EXPIRATION)").fix, .reconnect)
+        XCTAssertEqual(PlaidProblem(error: "bank down (INSTITUTION_DOWN)").fix, .retry)
+        XCTAssertEqual(PlaidProblem(error: "bad keys (INVALID_API_KEYS)").fix, .checkKeys)
+        XCTAssertEqual(PlaidProblem(error: "gone (ITEM_NOT_FOUND)").fix, .replace)
+        XCTAssertEqual(PlaidProblem(error: "This bank connection is missing its access token. Remove it and connect again.").fix, .replace)
+        XCTAssertEqual(PlaidProblem(error: "The request timed out.").fix, .retry)
+        XCTAssertEqual(PlaidProblem(error: "who knows").fix, .retry)
+    }
+
+    func testProblemOnlyWhenLastSyncFailed() {
+        let now = Date()
+        let failed = PlaidSyncStatus(lastSync: now.addingTimeInterval(-86_400), failedAt: now, error: "x (ITEM_LOGIN_REQUIRED)", now: now)
+        XCTAssertEqual(failed?.problem?.fix, .reconnect)
+        let recovered = PlaidSyncStatus(lastSync: now, failedAt: now.addingTimeInterval(-60), error: "x (ITEM_LOGIN_REQUIRED)", now: now)
+        XCTAssertNil(recovered?.problem)
+    }
+}

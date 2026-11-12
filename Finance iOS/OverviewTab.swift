@@ -45,6 +45,25 @@ struct OverviewTab: View {
                 })
     }
 
+    /// Bank connections whose last sync failed. Plaid only runs on the Mac, so the fix happens there.
+    private func attentionBanner(_ broken: [Account]) -> some View {
+        let banks = Array(Set(broken.map { $0.bankName.isEmpty ? $0.name : $0.bankName })).sorted()
+        let problem = broken.compactMap { PlaidSyncStatus($0)?.problem }.first
+        let canReconnect = problem?.fix == .reconnect || problem?.fix == .retry
+        return VStack(alignment: .leading, spacing: 4) {
+            Label("\(ListFormatter.localizedString(byJoining: banks)) need\(banks.count == 1 ? "s" : "") attention",
+                  systemImage: "exclamationmark.triangle.fill")
+                .font(.subheadline.bold()).foregroundStyle(.orange)
+            if let problem { Text(problem.message).font(.footnote) }
+            Text(canReconnect
+                 ? "Open Finance on your Mac and click Reconnect on the Overview. Until then these balances may be out of date."
+                 : "Open Finance on your Mac to fix it. Until then these balances may be out of date.")
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+    }
+
     private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
     private func short(_ v: Double) -> String {
         let f = NumberFormatter(); f.numberStyle = .currency; f.maximumFractionDigits = 0; f.locale = .current
@@ -84,6 +103,8 @@ struct OverviewTab: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    let broken = PlaidSyncStatus.needingAttention(allAccounts)
+                    if !broken.isEmpty { attentionBanner(broken) }
                     ForEach(cardOrder) { c in
                         switch c {
                         case .tiles:

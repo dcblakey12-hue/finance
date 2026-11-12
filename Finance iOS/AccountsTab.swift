@@ -40,7 +40,12 @@ struct AccountsTab: View {
                                 }
                             }
                             .contextMenu {
-                                if let sync = PlaidSyncStatus(a) { Section { Text(sync.detail()) } }
+                                if let sync = PlaidSyncStatus(a) {
+                                    Section {
+                                        Text(sync.detail())
+                                        if let p = sync.problem { Text(p.message + " Fix it in Finance on your Mac.") }
+                                    }
+                                }
                                 Toggle("Include in spending & cash flow", isOn: Binding(
                                     get: { a.countsInCashFlow }, set: { a.countsInCashFlow = $0; try? context.save() }))
                             }

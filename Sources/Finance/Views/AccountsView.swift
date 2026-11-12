@@ -7,6 +7,7 @@ struct AccountsView: View {
     @Query var transactions: [TransactionRecord]
     private var book: BalanceBook { BalanceBook(transactions: transactions) }
     @Environment(\.modelContext) private var context
+    @EnvironmentObject private var syncer: SyncCoordinator
 
     /// Called with an account's OFX `accountId` to show its transactions.
     var onOpenTransactions: (String) -> Void = { _ in }
@@ -32,6 +33,11 @@ struct AccountsView: View {
                                     }
                                     .font(.caption2).foregroundStyle(sync.isWarning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                                     .help(sync.detail())
+                                    if let problem = sync.problem {
+                                        Text(problem.message).font(.caption).foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        PlaidFixButton(itemId: syncer.item(feeding: a)?.itemId, problem: problem)
+                                    }
                                 }
                                 if !a.countsInCashFlow {
                                     Text("Not in spending or cash flow").font(.caption2).foregroundStyle(.secondary)
@@ -280,5 +286,101 @@ private struct AccountEditorSheet: View {
         let id = (type == .property && accountId.isEmpty) ? "property-\(UUID().uuidString.prefix(8))" : accountId
         onSave(.init(name: name, type: type, bankName: bankName.isEmpty ? "Manual" : bankName,
                      accountId: id, balance: Double(cleanedBalance) ?? 0, countsInCashFlow: countsInCashFlow))
+    }
+}
+
+// MARK: - Fixing a broken bank connection
+
+/// The button that fixes a failed Plaid sync: reconnect (sign in to the bank again), try again, or a pointer to Settings.
+struct PlaidFixButton: View {
+    let itemId: String?
+    let problem: PlaidProblem
+    @EnvironmentObject private var sync: SyncCoordinator
+    @Environment(\.modelContext) private var context
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let itemId {
+                if sync.reconnecting == itemId {
+                    ProgressView().controlSize(.small)
+                    Text("Finish signing in to the bank in your browser…").font(.caption)
+                    Button("Cancel") { sync.cancelReconnect() }.controlSize(.small)
+                } else {
+                    switch problem.fix {
+                    case .reconnect:
+                        reconnectButton(itemId).buttonStyle(.borderedProminent)
+                    case .retry:
+                        Button("Try Again") { sync.syncAll(in: context) }
+                            .disabled(sync.busy || sync.reconnecting != nil)
+                            .help("Sync your connected banks now.")
+                        reconnectButton(itemId)
+                    case .checkKeys:
+                        Text("Fix it in Settings → Bank connections (Plaid).").font(.caption).foregroundStyle(.secondary)
+                    case .replace:
+                        Text("In Settings → Bank connections (Plaid), choose Remove, then Connect a Bank.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            } else if DemoMode.isOn {
+                Button("Reconnect…") {}.disabled(true).help("Not available with demo data.")
+            } else {
+                Text("This Mac isn't connected to this bank. Reconnect it on the Mac that syncs it.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .controlSize(.small)
+    }
+
+    private func reconnectButton(_ itemId: String) -> some View {
+        Button("Reconnect…") { sync.reconnect(itemId, in: context) }
+            .disabled(sync.busy || sync.reconnecting != nil)
+            .help("Opens Plaid in your browser to sign in to the bank again. The same connection carries on: your history stays and no accounts are duplicated.")
+    }
+}
+
+/// On the Overview: banks whose last sync failed, what's wrong in plain words, and the fix.
+struct PlaidAttentionBanner: View {
+    let accounts: [Account]
+    @EnvironmentObject private var sync: SyncCoordinator
+
+    private struct Group: Identifiable {
+        var id: String
+        var itemId: String?
+        var bank: String
+        var accounts: [Account]
+        var problem: PlaidProblem
+    }
+
+    private var groups: [Group] {
+        var out: [Group] = []
+        for a in PlaidSyncStatus.needingAttention(accounts) {
+            guard let problem = PlaidSyncStatus(a)?.problem else { continue }
+            let item = sync.item(feeding: a)
+            let key = item?.itemId ?? "bank:" + a.bankName
+            if let i = out.firstIndex(where: { $0.id == key }) { out[i].accounts.append(a) }
+            else { out.append(Group(id: key, itemId: item?.itemId, bank: item?.institution ?? (a.bankName.isEmpty ? a.name : a.bankName),
+                                    accounts: [a], problem: problem)) }
+        }
+        return out
+    }
+
+    var body: some View {
+        let groups = groups
+        if !groups.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(groups) { g in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("\(g.bank) needs attention", systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout.bold()).foregroundStyle(.orange)
+                        Text(g.problem.message + " Affects " + g.accounts.map(\.name).joined(separator: ", ") + ".")
+                            .font(.callout).fixedSize(horizontal: false, vertical: true)
+                        PlaidFixButton(itemId: g.itemId, problem: g.problem)
+                    }
+                }
+                if sync.reconnecting == nil, !sync.status.isEmpty, !sync.busy {
+                    Text(sync.status).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        }
     }
 }
