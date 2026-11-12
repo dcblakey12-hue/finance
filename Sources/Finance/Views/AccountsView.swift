@@ -25,6 +25,14 @@ struct AccountsView: View {
                             VStack(alignment: .leading) {
                                 Text(a.name).font(.headline)
                                 Text("\(a.bankName) •••\(a.accountId.suffix(4))").font(.caption).foregroundStyle(.secondary)
+                                if let sync = PlaidSyncStatus(a) {
+                                    HStack(spacing: 3) {
+                                        if sync.isWarning { Image(systemName: "exclamationmark.triangle.fill") }
+                                        Text(sync.summary())
+                                    }
+                                    .font(.caption2).foregroundStyle(sync.isWarning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                                    .help(sync.detail())
+                                }
                                 if !a.countsInCashFlow {
                                     Text("Not in spending or cash flow").font(.caption2).foregroundStyle(.secondary)
                                 }

@@ -48,6 +48,12 @@ final class Account {
     /// Your choice for "Include in spending & cash flow". Nil = the account type's default
     /// (see `AccountType.countsInCashFlowByDefault`). Optional so older data and backups need no migration.
     var cashFlowOverride: Bool? = nil
+    /// When a Plaid sync last brought this account fully up to date. Set on the Mac only after the sync
+    /// worked and was saved; the phone reads it through iCloud. Nil for accounts not linked to Plaid.
+    var plaidLastSync: Date? = nil
+    /// When the latest Plaid sync attempt for this account failed, and why. Cleared by the next good sync.
+    var plaidSyncFailedAt: Date? = nil
+    var plaidSyncError: String? = nil
 
     init(id: UUID = UUID(), name: String, type: AccountType, accountId: String, bankName: String, balance: Double = 0,
          cashFlowOverride: Bool? = nil) {
@@ -62,6 +68,65 @@ final class Account {
     var countsInCashFlow: Bool {
         get { cashFlowOverride ?? type.countsInCashFlowByDefault }
         set { cashFlowOverride = newValue == type.countsInCashFlowByDefault ? nil : newValue }
+    }
+}
+
+/// What to show under a Plaid-linked account about its last sync. Nil for accounts Plaid doesn't feed.
+struct PlaidSyncStatus: Equatable {
+    enum Level: Equatable { case ok, stale, failed }
+    /// A sync older than this gets a warning.
+    static let staleAfter: TimeInterval = 3 * 24 * 60 * 60
+
+    var level: Level
+    var lastSync: Date?
+    var failedAt: Date?
+    var error: String?
+
+    @MainActor init?(_ a: Account, now: Date = Date()) {
+        self.init(lastSync: a.plaidLastSync, failedAt: a.plaidSyncFailedAt, error: a.plaidSyncError, now: now)
+    }
+
+    init?(lastSync: Date?, failedAt: Date?, error: String?, now: Date = Date()) {
+        // A failure older than the last good sync no longer matters.
+        let failed = failedAt.flatMap { f in (lastSync.map { f > $0 } ?? true) ? f : nil }
+        guard lastSync != nil || failed != nil else { return nil }
+        self.lastSync = lastSync; self.failedAt = failed; self.error = failed == nil ? nil : error
+        if failed != nil { level = .failed }
+        else if let l = lastSync, now.timeIntervalSince(l) > Self.staleAfter { level = .stale }
+        else { level = .ok }
+    }
+
+    var isWarning: Bool { level != .ok }
+
+    /// One line for the account list, e.g. "Synced today, 3:41 PM" or "Last sync failed · synced Nov 8, 3:41 PM".
+    func summary(now: Date = Date(), calendar: Calendar = .current) -> String {
+        let when = lastSync.map { Self.when($0, now: now, calendar: calendar) }
+        switch level {
+        case .ok, .stale: return "Synced " + (when ?? "")
+        case .failed: return "Last sync failed · " + (when.map { "synced " + $0 } ?? "never synced")
+        }
+    }
+
+    /// Longer text for a tooltip or detail line.
+    func detail(now: Date = Date(), calendar: Calendar = .current) -> String {
+        var parts: [String] = []
+        if let l = lastSync {
+            parts.append("Last synced with the bank \(l.formatted(date: .complete, time: .shortened)).")
+            if level == .stale { parts.append("That's over 3 days ago; open Finance on your Mac to sync.") }
+        } else { parts.append("Not synced with the bank yet.") }
+        if let f = failedAt {
+            parts.append("The last try, \(Self.when(f, now: now, calendar: calendar)), failed" + (error.map { ": \($0)" } ?? "."))
+        }
+        return parts.joined(separator: " ")
+    }
+
+    static func when(_ d: Date, now: Date, calendar: Calendar) -> String {
+        let time = d.formatted(date: .omitted, time: .shortened)
+        if calendar.isDate(d, inSameDayAs: now) { return "today, \(time)" }
+        if let y = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(d, inSameDayAs: y) { return "yesterday, \(time)" }
+        let sameYear = calendar.component(.year, from: d) == calendar.component(.year, from: now)
+        let day = sameYear ? d.formatted(.dateTime.month(.abbreviated).day()) : d.formatted(.dateTime.month(.abbreviated).day().year())
+        return "\(day), \(time)"
     }
 }
 

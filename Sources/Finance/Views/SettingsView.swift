@@ -205,7 +205,10 @@ struct PlaidSettingsSection: View {
                             .font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         Button("Sync Now") { syncOne(item.itemId) }.disabled(busy)
-                        Button("Remove", role: .destructive) { PlaidStore.remove(item.itemId); items = PlaidStore.items() }
+                        Button("Remove", role: .destructive) {
+                            PlaidStore.remove(item.itemId); items = PlaidStore.items()
+                            PlaidSync.forgetUnlinked(in: context)
+                        }
                     }
                     ForEach(item.accounts) { pa in
                         Picker("\(pa.name)\(pa.mask.map { " ••\($0)" } ?? "")", selection: mapping(item.itemId, pa.accountId)) {
@@ -229,6 +232,7 @@ struct PlaidSettingsSection: View {
                 guard let i = items.firstIndex(where: { $0.itemId == itemId }) else { return }
                 items[i].accountMap[plaidAccount] = v.isEmpty ? nil : v
                 PlaidStore.save(items)
+                PlaidSync.forgetUnlinked(in: context)
             })
     }
 

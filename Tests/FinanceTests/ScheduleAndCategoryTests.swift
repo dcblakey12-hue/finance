@@ -1386,3 +1386,109 @@ extension OverdueTests {
         XCTAssertFalse(ScheduleService.samePayee("NETFLIX.COM", "Acme Payroll"))
     }
 }
+
+@MainActor
+final class PlaidSyncStatusTests: XCTestCase {
+    private var context: ModelContext!
+    private let now = Date(timeIntervalSince1970: 1_800_000_000)
+    override func setUp() async throws {
+        let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        context = ModelContext(container)
+    }
+
+    private func hours(_ h: Double) -> Date { now.addingTimeInterval(-h * 3600) }
+
+    func testHiddenForAccountsPlaidDoesNotFeed() {
+        XCTAssertNil(PlaidSyncStatus(lastSync: nil, failedAt: nil, error: nil, now: now))
+        XCTAssertNil(PlaidSyncStatus(Account(name: "Cash", type: .cash, accountId: "cash", bankName: "Manual"), now: now))
+    }
+
+    func testRecentStaleAndFailed() {
+        XCTAssertEqual(PlaidSyncStatus(lastSync: hours(2), failedAt: nil, error: nil, now: now)?.level, .ok)
+        XCTAssertEqual(PlaidSyncStatus(lastSync: hours(71), failedAt: nil, error: nil, now: now)?.level, .ok)
+        XCTAssertEqual(PlaidSyncStatus(lastSync: hours(73), failedAt: nil, error: nil, now: now)?.level, .stale)
+        let failed = PlaidSyncStatus(lastSync: hours(5), failedAt: hours(1), error: "Bank offline", now: now)
+        XCTAssertEqual(failed?.level, .failed)
+        XCTAssertEqual(failed?.error, "Bank offline")
+        XCTAssertTrue(failed?.summary(now: now).hasPrefix("Last sync failed · synced") ?? false)
+        // Failed before ever syncing.
+        let never = PlaidSyncStatus(lastSync: nil, failedAt: hours(1), error: nil, now: now)
+        XCTAssertEqual(never?.summary(now: now), "Last sync failed · never synced")
+        // A failure from before the last good sync no longer counts.
+        let healed = PlaidSyncStatus(lastSync: hours(1), failedAt: hours(5), error: "old", now: now)
+        XCTAssertEqual(healed?.level, .ok)
+        XCTAssertNil(healed?.error)
+    }
+
+    func testSummaryWording() {
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = .current
+        let s = PlaidSyncStatus(lastSync: now.addingTimeInterval(-60), failedAt: nil, error: nil, now: now)!
+        XCTAssertTrue(s.summary(now: now, calendar: cal).hasPrefix("Synced today, ")
+                      || s.summary(now: now, calendar: cal).hasPrefix("Synced yesterday, "))   // just after midnight
+        let old = PlaidSyncStatus(lastSync: hours(24 * 10), failedAt: nil, error: nil, now: now)!
+        XCTAssertFalse(old.summary(now: now, calendar: cal).contains("today"))
+        XCTAssertTrue(old.detail(now: now, calendar: cal).contains("over 3 days ago"))
+    }
+
+    func testSuccessStampsOnlyTheSyncedAccountsAndClearsFailure() throws {
+        let a = Account(name: "A", type: .checking, accountId: "plaid-a", bankName: "B")
+        a.plaidSyncFailedAt = hours(3); a.plaidSyncError = "boom"
+        let b = Account(name: "B", type: .savings, accountId: "mine", bankName: "B")
+        let c = Account(name: "Cash", type: .cash, accountId: "cash", bankName: "Manual")
+        [a, b, c].forEach(context.insert)
+        PlaidSync.recordSuccess(["plaid-a", "mine"], in: context, at: now)
+        XCTAssertEqual(a.plaidLastSync, now); XCTAssertNil(a.plaidSyncFailedAt); XCTAssertNil(a.plaidSyncError)
+        XCTAssertEqual(b.plaidLastSync, now)
+        XCTAssertNil(c.plaidLastSync)
+    }
+
+    func testTargetsIncludeMappedAndNewAccounts() {
+        var item = PlaidItem(itemId: "i", institution: "Bank")
+        item.accounts = [PlaidAccountInfo(accountId: "p1", name: "Chk", mask: nil, type: "depository", subtype: nil, current: nil),
+                         PlaidAccountInfo(accountId: "p2", name: "Card", mask: nil, type: "credit", subtype: nil, current: nil)]
+        item.accountMap = ["p1": "MY-CHECKING"]
+        XCTAssertEqual(PlaidSync.targets(of: item), ["MY-CHECKING", "plaid-p2"])
+    }
+
+    func testBackupKeepsSyncTimesAndOldBackupsStillRestore() throws {
+        let a = Account(name: "A", type: .checking, accountId: "plaid-a", bankName: "B")
+        a.plaidLastSync = hours(2); a.plaidSyncFailedAt = hours(1); a.plaidSyncError = "Bank offline"
+        context.insert(a)
+        try context.save()
+        let back = try BackupService.decode(BackupService.encode(BackupService.snapshot(in: context)))
+        XCTAssertEqual(back.accounts.first?.plaidLastSync?.timeIntervalSince1970 ?? 0, hours(2).timeIntervalSince1970, accuracy: 1)
+        XCTAssertEqual(back.accounts.first?.plaidSyncError, "Bank offline")
+
+        var json = try JSONSerialization.jsonObject(with: BackupService.encode(back)) as! [String: Any]
+        json["accounts"] = (json["accounts"] as! [[String: Any]]).map {
+            var r = $0; ["plaidLastSync", "plaidSyncFailedAt", "plaidSyncError"].forEach { r.removeValue(forKey: $0) }; return r
+        }
+        let old = try BackupService.decode(JSONSerialization.data(withJSONObject: json))
+        BackupService.wipe(in: context)
+        BackupService.restore(old, in: context)
+        let restored = try context.fetch(FetchDescriptor<Account>())
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertNil(restored[0].plaidLastSync)
+        XCTAssertNil(PlaidSyncStatus(restored[0], now: now))
+
+        BackupService.wipe(in: context)
+        BackupService.restore(back, in: context)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Account>()).first.flatMap { PlaidSyncStatus($0, now: now) }?.level, .failed)
+    }
+
+    func testDemoShowsSyncTimesOnBankAccountsOnly() {
+        let file = DemoData.make(today: now)
+        func row(_ id: String) -> BackupFile.AccountRow { file.accounts.first { $0.accountId == id }! }
+        func level(_ id: String) -> PlaidSyncStatus.Level? {
+            let r = row(id)
+            return PlaidSyncStatus(lastSync: r.plaidLastSync, failedAt: r.plaidSyncFailedAt, error: r.plaidSyncError, now: now)?.level
+        }
+        XCTAssertEqual(level(DemoData.checking.id), .ok)
+        XCTAssertEqual(level(DemoData.travelMC.id), .failed)
+        XCTAssertNil(level(DemoData.cash.id))
+        XCTAssertNil(level(DemoData.home.id))
+        XCTAssertNil(level(DemoData.k401.id))
+    }
+}

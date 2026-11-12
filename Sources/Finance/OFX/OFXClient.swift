@@ -406,7 +406,55 @@ final class SyncCoordinator: ObservableObject {
 @MainActor
 enum PlaidSync {
     /// Pull new, changed and removed transactions and the latest balances for one linked bank.
+    /// Each account it feeds records when this last worked, or that it failed (shown in the account lists).
     static func sync(_ itemId: String, in context: ModelContext, client: PlaidClient = PlaidClient()) async throws -> String {
+        do { return try await syncItem(itemId, in: context, client: client) }
+        catch {
+            recordFailure(itemId, error: error, in: context)
+            throw error
+        }
+    }
+
+    /// The app accountIds a linked bank feeds, as far as this Mac knows.
+    static func targets(of item: PlaidItem) -> Set<String> {
+        Set(item.accounts.map { item.accountMap[$0.accountId] ?? (PlaidMapping.prefix + $0.accountId) })
+            .union(item.accountMap.values)
+    }
+
+    /// Mark every account fed by this bank as having failed to sync. The last good sync time stays.
+    static func recordFailure(_ itemId: String, error: Error, in context: ModelContext, at now: Date = Date()) {
+        guard let item = PlaidStore.items().first(where: { $0.itemId == itemId }) else { return }
+        let ids = targets(of: item)
+        for a in (try? context.fetch(FetchDescriptor<Account>())) ?? [] where ids.contains(a.accountId) {
+            a.plaidSyncFailedAt = now
+            a.plaidSyncError = error.localizedDescription
+        }
+        try? context.save()
+    }
+
+    /// Mark accounts as freshly synced, clearing any earlier failure.
+    static func recordSuccess(_ accountIds: Set<String>, in context: ModelContext, at now: Date = Date()) {
+        for a in (try? context.fetch(FetchDescriptor<Account>())) ?? [] where accountIds.contains(a.accountId) {
+            a.plaidLastSync = now
+            a.plaidSyncFailedAt = nil
+            a.plaidSyncError = nil
+        }
+    }
+
+    /// Forget sync times on accounts no linked bank feeds any more (after removing a bank or re-pointing an account).
+    static func forgetUnlinked(in context: ModelContext) {
+        guard !DemoMode.isOn else { return }   // the demo has no bank links of its own
+        let linked = PlaidStore.items().reduce(into: Set<String>()) { $0.formUnion(targets(of: $1)) }
+        var changed = false
+        for a in (try? context.fetch(FetchDescriptor<Account>())) ?? []
+        where !linked.contains(a.accountId) && (a.plaidLastSync != nil || a.plaidSyncFailedAt != nil) {
+            a.plaidLastSync = nil; a.plaidSyncFailedAt = nil; a.plaidSyncError = nil
+            changed = true
+        }
+        if changed { try? context.save() }
+    }
+
+    private static func syncItem(_ itemId: String, in context: ModelContext, client: PlaidClient) async throws -> String {
         var items = PlaidStore.items()
         guard let idx = items.firstIndex(where: { $0.itemId == itemId }), let token = PlaidStore.token(for: itemId) else {
             throw PlaidError.api("This bank connection is missing its access token. Remove it and connect again.")
@@ -473,6 +521,10 @@ enum PlaidSync {
             a.balance = ManualTransactionService.balance(
                 bank: bank, unreported: ManualTransactionService.unreported(in: a.accountId, from: remaining))
         }
+        // Only a sync that was saved counts: if saving fails, the error is recorded as a failed sync.
+        try context.save()
+        // The accounts the bank reported this time are now up to date.
+        recordSuccess(Set(item.accounts.compactMap { map[$0.accountId] }), in: context)
         try? context.save()
 
         item.cursor = cursor

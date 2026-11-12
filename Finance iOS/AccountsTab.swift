@@ -23,6 +23,13 @@ struct AccountsTab: View {
                                     VStack(alignment: .leading) {
                                         Text(a.name)
                                         if !a.bankName.isEmpty { Text(a.bankName).font(.caption).foregroundStyle(.secondary) }
+                                        if let sync = PlaidSyncStatus(a) {
+                                            HStack(spacing: 3) {
+                                                if sync.isWarning { Image(systemName: "exclamationmark.triangle.fill") }
+                                                Text(sync.summary())
+                                            }
+                                            .font(.caption2).foregroundStyle(sync.isWarning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                                        }
                                         if !a.countsInCashFlow {
                                             Text("Not in spending or cash flow").font(.caption2).foregroundStyle(.secondary)
                                         }
@@ -33,6 +40,7 @@ struct AccountsTab: View {
                                 }
                             }
                             .contextMenu {
+                                if let sync = PlaidSyncStatus(a) { Section { Text(sync.detail()) } }
                                 Toggle("Include in spending & cash flow", isOn: Binding(
                                     get: { a.countsInCashFlow }, set: { a.countsInCashFlow = $0; try? context.save() }))
                             }
@@ -44,7 +52,7 @@ struct AccountsTab: View {
                 }
                 if !accounts.isEmpty {
                     Section {} footer: {
-                        Text("Touch and hold an account to choose whether it counts in spending and cash flow. Net worth always includes every account.")
+                        Text("Touch and hold an account to choose whether it counts in spending and cash flow, or to see details of its last bank sync. Net worth always includes every account.")
                     }
                 }
                 if accounts.isEmpty {

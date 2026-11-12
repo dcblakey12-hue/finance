@@ -401,10 +401,26 @@ enum DemoData {
             return out
         }
 
+        /// Made-up bank sync times: most banks synced within the hour, one card's bank needs signing in again,
+        /// and the manual, investment and property accounts aren't linked to a bank at all.
+        func syncStatus(_ a: Acct, now: Date) -> (Date?, Date?, String?) {
+            func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
+            switch a.id {
+            case DemoData.checking.id, DemoData.visa.id: return (ago(18), nil, nil)
+            case DemoData.savings.id, DemoData.vacation.id: return (ago(42), nil, nil)
+            case DemoData.mortgage.id: return (ago(26 * 60), nil, nil)
+            case DemoData.travelMC.id:
+                return (ago(4 * 24 * 60 + 95), ago(18), "Lakeside Bank needs you to sign in again (ITEM_LOGIN_REQUIRED)")
+            default: return (nil, nil, nil)
+            }
+        }
+
         func file(createdAt: Date) -> BackupFile {
             let accounts = DemoData.all.map { a in
-                BackupFile.AccountRow(id: UUID(), name: a.name, typeRaw: a.type.rawValue, accountId: a.id, bankName: a.bank,
-                                      balance: ((balances[a.id] ?? a.opening) * 100).rounded() / 100)
+                var row = BackupFile.AccountRow(id: UUID(), name: a.name, typeRaw: a.type.rawValue, accountId: a.id, bankName: a.bank,
+                                                balance: ((balances[a.id] ?? a.opening) * 100).rounded() / 100)
+                (row.plaidLastSync, row.plaidSyncFailedAt, row.plaidSyncError) = syncStatus(a, now: createdAt)
+                return row
             }
             let ruleMerchants: [(String, String)] = [
                 ("FRESH BASKET MARKET #112", "Groceries"), ("GREENLEAF GROCERY", "Groceries"), ("BEAN THERE COFFEE", "Dining"),
