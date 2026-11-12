@@ -9,6 +9,7 @@ The phone app's code is in `Finance iOS/`. It shares these files with the Mac ap
 - `Sources/Finance/Services/ScheduleService.swift`
 - `Sources/Finance/Services/ForecastService.swift`
 - `Sources/Finance/Services/SubscriptionService.swift`
+- `Sources/Finance/Services/ReconciliationService.swift`
 - `Sources/Finance/Services/ReportService.swift`
 - `Sources/Finance/Views/ReportPDF.swift`
 

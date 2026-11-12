@@ -53,18 +53,14 @@ final class TransactionImportService {
         }
         // The bank's balance doesn't know about hand-entered transactions it hasn't reported yet,
         // so those still left over are added on top (matched ones were removed above).
-        if let bal = parsed.balance { account.balance = ManualTransactionService.balance(bank: bal, unreported: manual) }
+        if let bal = parsed.balance {
+            account.balance = ManualTransactionService.balance(bank: bal, unreported: manual.filter { !$0.reconciledByHand })
+        }
         try? context.save()
         // Scheduled payments the bank has now reported no longer count as overdue.
         ScheduleService.autoResolve(with: newlyInserted, in: context)
         return (inserted, skipped)
     }
-}
-
-extension TransactionRecord {
-    /// Confirmed by the bank: it came from a bank sync or a file import. Hand-entered transactions
-    /// (typed in, or entered from a scheduled payment) stay unreconciled until the bank reports them.
-    @MainActor var isReconciled: Bool { !ManualTransactionService.isManual(self) }
 }
 
 // MARK: - Hand-entered transactions
@@ -86,9 +82,10 @@ enum ManualTransactionService {
         return abs(days) <= matchWindowDays
     }
 
-    /// Hand-entered transactions in an account that the bank hasn't reported yet.
+    /// Hand-entered transactions in an account that the bank hasn't reported yet (its outstanding
+    /// entries). Ones you've marked reconciled by hand are taken to be in the bank's figure already.
     static func unreported(in accountId: String, from all: [TransactionRecord]) -> [TransactionRecord] {
-        all.filter { $0.accountId == accountId && isManual($0) }
+        all.filter { $0.accountId == accountId && isManual($0) && !$0.reconciledByHand }
     }
 
     /// The balance to show when the bank reports `bank`: its figure plus the hand-entered transactions
@@ -467,6 +464,8 @@ struct BackupFile: Codable, Equatable {
     struct TransactionRow: Codable, Equatable {
         var id: UUID; var fitid: String; var accountId: String; var accountName: String; var date: Date
         var name: String; var amount: Double; var typeRaw: String; var category: String; var memo: String; var transferPeerId: UUID?
+        /// Missing in backups made before transactions could be reconciled by hand.
+        var reconciledByHand: Bool? = nil
     }
     struct EnvelopeRow: Codable, Equatable { var id: UUID; var category: String; var year: Int; var month: Int; var allocated: Double }
     struct ScheduleRow: Codable, Equatable {
@@ -505,7 +504,8 @@ enum BackupService {
             createdAt: now,
             accounts: all(Account.self).map { .init(id: $0.id, name: $0.name, typeRaw: $0.typeRaw, accountId: $0.accountId, bankName: $0.bankName, balance: $0.balance, cashFlowOverride: $0.cashFlowOverride,
                                                plaidLastSync: $0.plaidLastSync, plaidSyncFailedAt: $0.plaidSyncFailedAt, plaidSyncError: $0.plaidSyncError) },
-            transactions: all(TransactionRecord.self).map { .init(id: $0.id, fitid: $0.fitid, accountId: $0.accountId, accountName: $0.accountName, date: $0.date, name: $0.name, amount: $0.amount, typeRaw: $0.typeRaw, category: $0.category, memo: $0.memo, transferPeerId: $0.transferPeerId) },
+            transactions: all(TransactionRecord.self).map { .init(id: $0.id, fitid: $0.fitid, accountId: $0.accountId, accountName: $0.accountName, date: $0.date, name: $0.name, amount: $0.amount, typeRaw: $0.typeRaw, category: $0.category, memo: $0.memo, transferPeerId: $0.transferPeerId,
+                                                             reconciledByHand: $0.reconciledByHand ? true : nil) },
             envelopes: all(Envelope.self).map { .init(id: $0.id, category: $0.category, year: $0.year, month: $0.month, allocated: $0.allocated) },
             schedules: all(RecurringBill.self).map { .init(id: $0.id, name: $0.name, amount: $0.amount, dueDay: $0.dueDay, category: $0.category, isActive: $0.isActive, lastPaid: $0.lastPaid, kindRaw: $0.kindRaw, fromAccountId: $0.fromAccountId, toAccountId: $0.toAccountId, frequencyRaw: $0.frequencyRaw, secondDay: $0.secondDay, anchorDate: $0.anchorDate, occurrenceLogRaw: $0.occurrenceLogRaw, accountId: $0.accountId, trackedSince: $0.trackedSince, endDate: $0.endDate) },
             profiles: all(OFXProfile.self).map { .init(id: $0.id, bankName: $0.bankName, ofxHomeURL: $0.ofxHomeURL, username: $0.username, accountId: $0.accountId, clientUID: $0.clientUID, lastSync: $0.lastSync) },
@@ -541,7 +541,7 @@ enum BackupService {
         }
         for t in file.transactions {
             let r = TransactionRecord(id: t.id, fitid: t.fitid, accountId: t.accountId, accountName: t.accountName, date: t.date, name: t.name, amount: t.amount, type: TransactionType(rawValue: t.typeRaw) ?? .debit, category: t.category, memo: t.memo)
-            r.transferPeerId = t.transferPeerId; context.insert(r)
+            r.transferPeerId = t.transferPeerId; r.reconciledByHand = t.reconciledByHand ?? false; context.insert(r)
         }
         for e in file.envelopes { context.insert(Envelope(id: e.id, category: e.category, year: e.year, month: e.month, allocated: e.allocated)) }
         for s in file.schedules {

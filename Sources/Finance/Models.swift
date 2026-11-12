@@ -242,6 +242,10 @@ final class TransactionRecord {
     /// The other side of a transfer between two of your accounts (e.g. the card payment
     /// that matches a bank debit). Nil when not linked.
     var transferPeerId: UUID? = nil
+    /// You ticked a hand-entered transaction as reconciled (e.g. it's on your statement, or the
+    /// account has no bank feed). Ignored for bank-synced and imported transactions, which are
+    /// always reconciled. See `ReconciliationService`.
+    var reconciledByHand: Bool = false
 
     init(id: UUID = UUID(), fitid: String, accountId: String, accountName: String, date: Date, name: String, amount: Double, type: TransactionType, category: String = "Uncategorized", memo: String = "") {
         self.id = id; self.fitid = fitid; self.accountId = accountId; self.accountName = accountName

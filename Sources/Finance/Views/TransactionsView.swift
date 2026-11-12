@@ -23,11 +23,14 @@ struct TransactionsView: View {
     @State private var confirmingDelete = false
     /// Transaction whose category list is open.
     @State private var editingCategoryFor: UUID?
+    /// Show only entries the bank hasn't reported yet.
+    @State private var outstandingOnly = false
 
     var filtered: [TransactionRecord] {
         transactions.filter { t in
             filters.matches(accountId: t.accountId, category: t.category, date: t.date, amount: t.amount) &&
-            (search.isEmpty || t.name.localizedCaseInsensitiveContains(search) || t.memo.localizedCaseInsensitiveContains(search))
+            (search.isEmpty || t.name.localizedCaseInsensitiveContains(search) || t.memo.localizedCaseInsensitiveContains(search)) &&
+            (!outstandingOnly || t.isOutstanding)
         }
     }
     /// Transactions in the selected account(s), ignoring search and category
@@ -43,6 +46,11 @@ struct TransactionsView: View {
     }
     private var balances: [UUID: Double] {
         RunningBalance.compute(newestFirst: inScope.map { ($0.id, $0.amount) }, endingBalance: endingBalance)
+    }
+    /// Reconciled and outstanding balances for the selected account (or all accounts).
+    private var reconciliation: ReconciliationSummary {
+        ReconciliationService.summary(for: filters.accountId == nil ? accounts : accounts.filter { $0.accountId == filters.accountId },
+                                      transactions: transactions)
     }
     private var shownNet: Double { filtered.reduce(0) { $0 + $1.amount } }
 
@@ -111,13 +119,10 @@ struct TransactionsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal).padding(.bottom, 6)
             }
+            ReconciliationBar(summary: reconciliation, outstandingOnly: $outstandingOnly)
             List(rows, selection: $selection) { tx in
                 HStack {
-                    Image(systemName: tx.isReconciled ? "checkmark.circle.fill" : "circle.dashed")
-                        .foregroundStyle(tx.isReconciled ? Color.green : Color.secondary)
-                        .frame(width: 20)
-                        .help(tx.isReconciled ? "Reconciled: confirmed by a bank sync or file import"
-                                              : "Not reconciled yet: entered by hand, waiting for the bank to report it")
+                    reconcileMarker(tx)
                     Text(tx.date, format: .dateTime.month(.abbreviated).day().year())
                         .monospacedDigit()
                         .frame(width: 100, alignment: .leading)
@@ -178,6 +183,7 @@ struct TransactionsView: View {
                     } else {
                         Button("Link to Matching Transaction…") { linkingTx = tx }
                     }
+                    reconcileMenuItems(tx)
                     Divider()
                     Button(selection.contains(tx.id) && selection.count > 1 ? "Delete \(selection.count) Transactions…" : "Delete Transaction…", role: .destructive) {
                         if !selection.contains(tx.id) { selection = [tx.id] }
@@ -296,6 +302,39 @@ struct TransactionsView: View {
         .frame(width: 220, height: 320)
     }
 
+    /// The row's reconciled / outstanding marker. Hand-entered rows can be clicked to tick or untick.
+    @ViewBuilder private func reconcileMarker(_ tx: TransactionRecord) -> some View {
+        if ReconciliationService.canToggle(tx) {
+            Button { ReconciliationService.setReconciled(tx, !tx.isReconciled, in: context) } label: {
+                ReconciliationMarker(transaction: tx)
+            }
+            .buttonStyle(.plain).frame(width: 20)
+            .help(ReconciliationMarker.help(tx) + ". Click to mark it \(tx.isReconciled ? "outstanding" : "reconciled").")
+        } else {
+            ReconciliationMarker(transaction: tx).frame(width: 20).help(ReconciliationMarker.help(tx))
+        }
+    }
+
+    /// Mark as Reconciled / Outstanding for hand-entered rows (all selected ones when several are picked).
+    @ViewBuilder private func reconcileMenuItems(_ tx: TransactionRecord) -> some View {
+        let picked = selection.contains(tx.id) ? transactions.filter { selection.contains($0.id) } : [tx]
+        let manual = picked.filter(ReconciliationService.canToggle)
+        if !manual.isEmpty {
+            Divider()
+            let s = manual.count > 1 ? " (\(manual.count))" : ""
+            if manual.contains(where: \.isOutstanding) {
+                Button("Mark as Reconciled\(s)") {
+                    for t in manual { ReconciliationService.setReconciled(t, true, in: context) }
+                }
+            }
+            if manual.contains(where: \.reconciledByHand) {
+                Button("Mark as Outstanding\(s)") {
+                    for t in manual { ReconciliationService.setReconciled(t, false, in: context) }
+                }
+            }
+        }
+    }
+
     private func chip(_ title: String, clear: @escaping () -> Void) -> some View {
         Button(action: clear) { Label(title, systemImage: "xmark.circle.fill") }
             .buttonStyle(.bordered).controlSize(.small)
@@ -345,6 +384,43 @@ struct TransactionsView: View {
     private func ordinalSuffix(_ n: Int) -> String {
         if (11...13).contains(n % 100) { return "th" }
         switch n % 10 { case 1: return "st"; case 2: return "nd"; case 3: return "rd"; default: return "th" }
+    }
+}
+
+// MARK: - Reconciled and outstanding balances
+
+/// Strip above the list: what the bank should show, what's outstanding, and the balance with it.
+private struct ReconciliationBar: View {
+    let summary: ReconciliationSummary
+    @Binding var outstandingOnly: Bool
+
+    private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
+
+    var body: some View {
+        HStack(spacing: 20) {
+            figure("Reconciled balance", money(summary.reconciledBalance),
+                   help: "What your bank should show: bank-synced and imported transactions, plus hand-entered ones you've marked reconciled")
+            figure(summary.outstandingCount == 1 ? "1 outstanding" : "\(summary.outstandingCount) outstanding",
+                   money(summary.outstandingTotal), tint: summary.hasOutstanding ? .orange : .secondary,
+                   help: "Entered by hand and not reported by the bank yet. They clear when a sync or import matches them (within 5 days), or when you mark them reconciled.")
+            figure("Balance with outstanding", money(summary.balance),
+                   help: "The reconciled balance plus the outstanding entries: what you'll have once they all clear")
+            Spacer()
+            Toggle("Outstanding only", isOn: $outstandingOnly)
+                .toggleStyle(.checkbox)
+                .disabled(!summary.hasOutstanding && !outstandingOnly)
+                .help("Show only the outstanding entries")
+        }
+        .padding(.horizontal).padding(.vertical, 6)
+        .background(.quaternary.opacity(0.35))
+    }
+
+    private func figure(_ title: String, _ value: String, tint: Color = .primary, help: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.callout.weight(.semibold)).monospacedDigit().foregroundStyle(tint)
+        }
+        .help(help)
     }
 }
 

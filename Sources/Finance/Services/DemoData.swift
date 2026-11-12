@@ -231,12 +231,16 @@ enum DemoData {
         // Records
         @discardableResult
         func add(_ a: Acct, _ date: Date, _ name: String, _ amount: Double, _ category: String,
-                          id: UUID = UUID(), peer: UUID? = nil, schedule: String? = nil) -> UUID {
+                          id: UUID = UUID(), peer: UUID? = nil, schedule: String? = nil,
+                          manual: Bool = false, reconciledByHand: Bool = false) -> UUID {
             serial += 1
             let value = (amount * 100).rounded() / 100
-            txs.append(.init(id: id, fitid: "DEMO-\(String(format: "%05d", serial))", accountId: a.id, accountName: a.name,
+            // Hand-entered ones get the app's "manual-" id, so they show as outstanding until reconciled.
+            let fitid = manual ? "manual-demo-\(serial)" : "DEMO-\(String(format: "%05d", serial))"
+            txs.append(.init(id: id, fitid: fitid, accountId: a.id, accountName: a.name,
                              date: cal.date(byAdding: .hour, value: 12, to: date)!, name: name, amount: value,
-                             typeRaw: value < 0 ? "debit" : "credit", category: category, memo: "", transferPeerId: peer))
+                             typeRaw: value < 0 ? "debit" : "credit", category: category, memo: "", transferPeerId: peer,
+                             reconciledByHand: reconciledByHand ? true : nil))
             balances[a.id, default: 0] += value
             if let schedule { lastPaid[schedule] = date }
             return id
@@ -346,6 +350,12 @@ enum DemoData {
                 // A few recent purchases left uncategorized, to show categorizing
                 if cal.isDate(day, inSameDayAs: days(-2, from: today)) { add(DemoData.visa, day, "SQ *LUNCHBOX TRUCK", -14.25, "Uncategorized") }
                 if cal.isDate(day, inSameDayAs: days(-1, from: today)) { add(DemoData.visa, day, "POS 4471 ODDS AND ENDS", -27.60, "Uncategorized") }
+
+                // Entered by hand and not reported by the bank yet (outstanding), plus one ticked off by hand
+                if cal.isDate(day, inSameDayAs: days(-3, from: today)) { add(DemoData.checking, day, "Check #1042 piano lessons", -120, "Childcare", manual: true) }
+                if cal.isDate(day, inSameDayAs: days(-1, from: today)) { add(DemoData.checking, day, "Mobile deposit birthday check", 50, "Income", manual: true) }
+                if cal.isDate(day, inSameDayAs: today) { add(DemoData.visa, day, "Coffee Corner", -6.75, "Dining", manual: true) }
+                if cal.isDate(day, inSameDayAs: days(-2, from: today)) { add(DemoData.cash, day, "Bake sale", -12, "Other", manual: true, reconciledByHand: true) }
 
                 let next = days(1, from: day)
                 if cal.component(.month, from: next) != cal.component(.month, from: day) { monthIndex += 1 }

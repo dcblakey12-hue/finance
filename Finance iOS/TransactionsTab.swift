@@ -16,6 +16,8 @@ struct TransactionsTab: View {
     @State private var accountFilter: String?     // used only when not pushed from an account
     @State private var categoryFilter = "All"
     @State private var adding = false
+    /// Show only entries the bank hasn't reported yet.
+    @State private var outstandingOnly = false
 
     private var effectiveAccount: String? { accountId ?? accountFilter }
     private var rows: [TransactionRecord] {
@@ -23,6 +25,7 @@ struct TransactionsTab: View {
             if let a = effectiveAccount, t.accountId != a { return false }
             if categoryFilter != "All", t.category != categoryFilter { return false }
             if !search.isEmpty, !t.name.localizedCaseInsensitiveContains(search) { return false }
+            if outstandingOnly, !t.isOutstanding { return false }
             return true
         }
     }
@@ -39,6 +42,11 @@ struct TransactionsTab: View {
     private var runningBalances: [UUID: Double] {
         landscape ? RunningBalance.compute(newestFirst: inScope.map { ($0.id, $0.amount) }, endingBalance: endingBalance) : [:]
     }
+    /// Reconciled and outstanding balances for the account (or all accounts).
+    private var reconciliation: ReconciliationSummary {
+        ReconciliationService.summary(for: effectiveAccount == nil ? accounts : accounts.filter { $0.accountId == effectiveAccount },
+                                      transactions: transactions)
+    }
     private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
 
     var body: some View {
@@ -48,12 +56,13 @@ struct TransactionsTab: View {
     private var content: some View {
         List {
             let balances = runningBalances
+            Section { ReconciliationSection(summary: reconciliation, outstandingOnly: $outstandingOnly) }
+            Section {
             ForEach(rows.prefix(500)) { t in
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Image(systemName: t.isReconciled ? "checkmark.circle.fill" : "circle.dashed")
-                            .font(.caption).foregroundStyle(t.isReconciled ? Color.green : Color.secondary)
+                        ReconciliationMarker(transaction: t).font(.caption)
                         Text(t.name).lineLimit(1)
                         if ManualTransactionService.isManual(t) {
                             Text("manual").font(.caption2).foregroundStyle(.secondary)
@@ -78,11 +87,22 @@ struct TransactionsTab: View {
                     .frame(width: 110, alignment: .trailing)
                 }
             }
+            .swipeActions(edge: .leading) {
+                // Hand-entered entries can be ticked off against the bank (or unticked).
+                if ReconciliationService.canToggle(t) {
+                    Button { ReconciliationService.setReconciled(t, !t.isReconciled, in: context) } label: {
+                        Label(t.isReconciled ? "Outstanding" : "Reconciled",
+                              systemImage: t.isReconciled ? "circle.dashed" : "checkmark.circle")
+                    }
+                    .tint(t.isReconciled ? .orange : .green)
+                }
+            }
             }
             .onDelete { idx in
                 // Only hand-entered transactions can be deleted; imported ones come from the bank.
                 let shown = Array(rows.prefix(500))
                 for i in idx { ManualTransactionService.delete(shown[i], from: accounts, in: context) }
+            }
             }
         }
         .navigationTitle(title)
@@ -103,6 +123,7 @@ struct TransactionsTab: View {
                             ForEach(accounts) { Text($0.name).tag(Optional($0.accountId)) }
                         }
                     }
+                    Toggle("Outstanding only", isOn: $outstandingOnly)
                     Picker("Category", selection: $categoryFilter) {
                         Text("All categories").tag("All")
                         ForEach(allCategoryChoices(customCategories), id: \.self) { Text($0).tag($0) }
@@ -111,7 +132,7 @@ struct TransactionsTab: View {
             }
         }
         .overlay {
-            if rows.isEmpty { ContentUnavailableView("No transactions", systemImage: "list.bullet") }
+            if inScope.isEmpty { ContentUnavailableView("No transactions", systemImage: "list.bullet") }
         }
     }
 
@@ -192,5 +213,36 @@ struct AddTransactionSheet: View {
             }
         }
         .onAppear { accountId = accountId ?? preselected ?? accounts.first?.accountId }
+    }
+}
+
+/// Top of the transaction list: what the bank should show, what's outstanding, and the balance with it.
+private struct ReconciliationSection: View {
+    let summary: ReconciliationSummary
+    @Binding var outstandingOnly: Bool
+
+    private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
+
+    var body: some View {
+        LabeledContent("Reconciled balance") {
+            Text(money(summary.reconciledBalance)).monospacedDigit().fontWeight(.semibold)
+        }
+        Button { outstandingOnly.toggle() } label: {
+            LabeledContent {
+                Text(money(summary.outstandingTotal)).monospacedDigit()
+                    .foregroundStyle(summary.hasOutstanding ? Color.orange : Color.secondary)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "circle.dashed").foregroundStyle(summary.hasOutstanding ? Color.orange : Color.secondary)
+                    Text(summary.outstandingCount == 1 ? "1 outstanding" : "\(summary.outstandingCount) outstanding")
+                    if outstandingOnly { Text("· showing only these").font(.caption).foregroundStyle(.secondary) }
+                }
+            }
+        }
+        .disabled(!summary.hasOutstanding && !outstandingOnly)
+        .tint(.primary)
+        LabeledContent("Balance with outstanding") {
+            Text(money(summary.balance)).monospacedDigit()
+        }
     }
 }
