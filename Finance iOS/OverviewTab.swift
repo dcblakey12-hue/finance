@@ -74,7 +74,9 @@ struct OverviewTab: View {
         let nextPay = proj.upcoming.first { $0.isIncome }
         let history = DashboardMath.netWorthHistory(currentTotal: netWorth,
                                                     transactions: transactions.map { (date: $0.date, amount: $0.amount) }, months: 12)
-        let rows: [SpendingReport.Row] = transactions.map { ($0.category, $0.amount, $0.date) }
+        // Spending leaves out accounts excluded from cash flow (e.g. a mortgage paying escrow); net worth still counts them.
+        let flowTransactions = CashFlowScope.transactions(transactions, accounts: allAccounts)
+        let rows: [SpendingReport.Row] = flowTransactions.map { ($0.category, $0.amount, $0.date) }
         let spend = SpendingReport.byCategory(rows, period: .last30Days)
         let spent = SpendingReport.totals(rows, period: .last30Days).expenses
         let picked = pickedDay.flatMap { d in proj.points.first { Calendar.current.isDate($0.date, inSameDayAs: d) } }
@@ -169,7 +171,7 @@ struct OverviewTab: View {
                                 Text(money(spent)).font(.title3.bold().monospacedDigit())
                                 ForEach(spend.prefix(6), id: \.category) { c in
                                     NavigationLink {
-                                        CategoryTransactionsList(category: c.category, transactions: transactions)
+                                        CategoryTransactionsList(category: c.category, transactions: flowTransactions)
                                     } label: {
                                     HStack {
                                         Text(c.category).lineLimit(1)
@@ -185,7 +187,7 @@ struct OverviewTab: View {
                         case .subscriptions:
                         card("Subscriptions") {
                             // Every account, not just the ones picked for the overview: a subscription is yours either way.
-                            let subs = SubscriptionService.detect(transactions: allTransactions, marks: subscriptionMarks)
+                            let subs = SubscriptionService.detect(transactions: CashFlowScope.transactions(allTransactions, accounts: allAccounts), marks: subscriptionMarks)
                             let totals = SubscriptionService.totals(subs)
                             let toReview = subs.filter { $0.status == .unreviewed }.count
                             NavigationLink {

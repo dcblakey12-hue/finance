@@ -69,12 +69,15 @@ struct DashboardView: View {
         let nextPay = proj.upcoming.first { $0.isIncome }
         let overdue = ScheduleService.overdue(bills)
         let history = DashboardMath.netWorthHistory(currentTotal: netWorth, transactions: transactions.map { (date: $0.date, amount: $0.amount) }, months: 12)
+        // Spending, income and the forecast leave out accounts you've excluded from cash flow
+        // (e.g. a mortgage paying escrow); net worth above still counts them.
+        let flowTransactions = CashFlowScope.transactions(transactions, accounts: allAccounts)
         let forecast = CashFlowForecastService.forecast(
-            bills: bills, envelopes: envelopes, transactions: transactions,
+            bills: bills, envelopes: envelopes, transactions: flowTransactions,
             options: ForecastOptions(months: 6, includeEnvelopes: true, fallbackAverageVariable: true, inferIncomeFromHistory: true,
-                                     startingBalance: accounts.filter { !$0.type.isPropertyValue }.reduce(0) { $0 + $1.balance }),
-            accountIds: sel)
-        let rows: [SpendingReport.Row] = transactions.map { ($0.category, $0.amount, $0.date) }
+                                     startingBalance: accounts.filter { !$0.type.isPropertyValue && $0.countsInCashFlow }.reduce(0) { $0 + $1.balance }),
+            accountIds: CashFlowScope.accountIds(selected: sel, accounts: allAccounts))
+        let rows: [SpendingReport.Row] = flowTransactions.map { ($0.category, $0.amount, $0.date) }
         let totals = SpendingReport.totals(rows, period: period)
         let spend = SpendingReport.byCategory(rows, period: period)
 

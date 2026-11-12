@@ -28,7 +28,9 @@ struct ForecastView: View {
         let ids = Set(accountIdsRaw.split(separator: ",").map(String.init)).intersection(accounts.map(\.accountId))
         return ids.isEmpty || ids.count == accounts.count ? nil : ids
     }
-    private var includedAccounts: [Account] { accounts.filter { selectedIds?.contains($0.accountId) ?? true } }
+    /// Accounts the forecast counts: the ones picked, minus any excluded from cash flow (e.g. a mortgage).
+    private var includedAccounts: [Account] { accounts.filter { (selectedIds?.contains($0.accountId) ?? true) && $0.countsInCashFlow } }
+    private var flowTransactions: [TransactionRecord] { CashFlowScope.transactions(transactions, accounts: accounts) }
     private func isIncluded(_ a: Account) -> Binding<Bool> {
         Binding(get: { selectedIds?.contains(a.accountId) ?? true },
                 set: { on in
@@ -47,18 +49,18 @@ struct ForecastView: View {
         let now = includedAccounts.filter { !$0.type.isPropertyValue }.reduce(0) { $0 + $1.balance }
         let start = Calendar.current.startOfDay(for: startDate)
         guard start < Calendar.current.startOfDay(for: Date()) else { return now }
-        return now - transactions.filter { $0.date >= start && (selectedIds?.contains($0.accountId) ?? true) }.reduce(0) { $0 + $1.amount }
+        return now - flowTransactions.filter { $0.date >= start && (selectedIds?.contains($0.accountId) ?? true) }.reduce(0) { $0 + $1.amount }
     }
 
     var forecast: [ForecastMonth] {
         CashFlowForecastService.forecast(
-            bills: bills, envelopes: envelopes, transactions: transactions,
+            bills: bills, envelopes: envelopes, transactions: flowTransactions,
             options: ForecastOptions(
                 months: monthsToShow, includeEnvelopes: includeEnvelopes,
                 fallbackAverageVariable: fallbackAverage, inferIncomeFromHistory: inferIncome,
                 startingBalance: startingBalance, from: startDate
             ),
-            accountIds: selectedIds
+            accountIds: CashFlowScope.accountIds(selected: selectedIds, accounts: accounts)
         )
     }
 
@@ -332,7 +334,7 @@ struct ForecastView: View {
     private var assumptions: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("How this is calculated").font(.caption.bold())
-            Text("• Starting balance = sum of all accounts (for an earlier start date, wound back by what posted since, so paydays after it count again). Current month counts only events still ahead; envelope spend is pro-rated by remaining days.")
+            Text("• Starting balance = sum of all accounts, except ones set to stay out of spending & cash flow (for an earlier start date, wound back by what posted since, so paydays after it count again). Current month counts only events still ahead; envelope spend is pro-rated by remaining days.")
             Text("• Bills in an envelope category reduce that envelope (Rent $1,200 in Housing $1,500 → $300 variable), avoiding double count.")
             Text("• Future months reuse the most recent envelope month; with no envelopes, a trailing 3-month average is used (if enabled).")
             Text("• Estimated income is only used when you have no paycheck scheduled (if enabled).")

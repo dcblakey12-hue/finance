@@ -282,6 +282,10 @@ enum DemoData {
                     add(DemoData.checking, day, "CEDAR RIDGE HOME LOANS PMT", 1845.00 * -1, "Housing", schedule: "Mortgage")
                     add(DemoData.mortgage, day, "Principal payment", 548 + Double(monthIndex) * 2.35, Categorizer.transfer)
                 }
+                // Escrow paid straight out of the mortgage account. The mortgage is left out of spending and
+                // cash flow by default, so these show in net worth but not in the Overview's spending.
+                if monthsAgo % 6 == 0 && on(5) { add(DemoData.mortgage, day, "COUNTY PROPERTY TAX (ESCROW)", -2140, "Housing") }
+                if monthsAgo % 12 == 4 && on(12) { add(DemoData.mortgage, day, "HOMEOWNERS INSURANCE (ESCROW)", -1380, "Housing") }
                 // Savings and investing go out the day after the mid-month paycheck.
                 if on(16) {
                     transfer(1000, from: DemoData.checking, to: DemoData.savings, on: day, out: "Transfer to High-Yield Savings", in: "Transfer from Everyday Checking", schedule: "Save to High-Yield Savings")

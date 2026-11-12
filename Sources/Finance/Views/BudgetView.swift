@@ -30,8 +30,10 @@ struct BudgetView: View {
     private var scheduleItems: [ScheduleItem] { schedules.filter(\.isActive).map(\.item) }
     private var scheduledByCategory: [String: Double] { BudgetSync.scheduledExpenses(scheduleItems) }
     private var scheduledIncome: Double { BudgetSync.scheduledIncome(scheduleItems) }
+    /// Spending and income leave out accounts excluded from cash flow (e.g. a mortgage's escrow).
+    private var flowTransactions: [TransactionRecord] { CashFlowScope.transactions(transactions, accounts: accounts) }
     var summary: MonthlySummary {
-        BudgetService.summary(year: year, month: month, transactions: transactions, incomeAccountIds: checkingAccountIds)
+        BudgetService.summary(year: year, month: month, transactions: flowTransactions, incomeAccountIds: checkingAccountIds)
     }
 
     var body: some View {
@@ -77,7 +79,7 @@ struct BudgetView: View {
                 ForEach(BudgetService.allCategories(stored: customCategories.map(\.name)), id: \.self) { cat in
                     let env = thisMonth.first { $0.category == cat }
                     let allocated = env?.allocated ?? 0
-                    let spent = BudgetService.spent(for: cat, year: year, month: month, transactions: transactions)
+                    let spent = BudgetService.spent(for: cat, year: year, month: month, transactions: flowTransactions)
                     let progress = allocated > 0 ? min(spent / allocated, 1) : 0
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
