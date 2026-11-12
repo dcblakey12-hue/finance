@@ -187,7 +187,7 @@ struct OverviewTab: View {
                         case .subscriptions:
                         card("Subscriptions") {
                             // Every account, not just the ones picked for the overview: a subscription is yours either way.
-                            let subs = SubscriptionService.detect(transactions: CashFlowScope.transactions(allTransactions, accounts: allAccounts), marks: subscriptionMarks)
+                            let subs = SubscriptionService.detect(transactions: allTransactions, marks: subscriptionMarks)
                             let totals = SubscriptionService.totals(subs)
                             let toReview = subs.filter { $0.status == .unreviewed }.count
                             NavigationLink {
