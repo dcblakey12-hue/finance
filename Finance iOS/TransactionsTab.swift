@@ -16,6 +16,7 @@ struct TransactionsTab: View {
     @State private var accountFilter: String?     // used only when not pushed from an account
     @State private var categoryFilter = "All"
     @State private var adding = false
+    @State private var editing: TransactionRecord?
 
     private var effectiveAccount: String? { accountId ?? accountFilter }
     private var rows: [TransactionRecord] {
@@ -55,6 +56,7 @@ struct TransactionsTab: View {
                         Image(systemName: t.isReconciled ? "checkmark.circle.fill" : "circle.dashed")
                             .font(.caption).foregroundStyle(t.isReconciled ? Color.green : Color.secondary)
                         Text(t.name).lineLimit(1)
+                        if t.wasEdited { Image(systemName: "pencil").font(.caption2).foregroundStyle(.secondary) }
                         if ManualTransactionService.isManual(t) {
                             Text("manual").font(.caption2).foregroundStyle(.secondary)
                         }
@@ -78,6 +80,11 @@ struct TransactionsTab: View {
                     .frame(width: 110, alignment: .trailing)
                 }
             }
+            .contentShape(Rectangle())
+            .onTapGesture { editing = t }
+            .swipeActions(edge: .leading) {
+                Button { editing = t } label: { Label("Edit", systemImage: "pencil") }.tint(.blue)
+            }
             }
             .onDelete { idx in
                 // Only hand-entered transactions can be deleted; imported ones come from the bank.
@@ -87,6 +94,9 @@ struct TransactionsTab: View {
         }
         .navigationTitle(title)
         .searchable(text: $search)
+        .sheet(item: $editing) { t in
+            EditTransactionSheet(tx: t, accounts: accounts, categories: allCategoryChoices(customCategories))
+        }
         .sheet(isPresented: $adding) {
             AddTransactionSheet(accounts: accounts, preselected: accountId, categories: allCategoryChoices(customCategories))
         }
@@ -192,5 +202,62 @@ struct AddTransactionSheet: View {
             }
         }
         .onAppear { accountId = accountId ?? preselected ?? accounts.first?.accountId }
+    }
+}
+
+/// Change a transaction's date, payee, amount, category, account and notes. Same rules as on the Mac.
+struct EditTransactionSheet: View {
+    let tx: TransactionRecord
+    let accounts: [Account]
+    let categories: [String]
+
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    @State private var edit: TransactionEdit
+    @State private var isIncome: Bool
+    @State private var amountText: String
+
+    init(tx: TransactionRecord, accounts: [Account], categories: [String]) {
+        self.tx = tx; self.accounts = accounts; self.categories = categories
+        _edit = State(initialValue: TransactionEdit(tx))
+        _isIncome = State(initialValue: tx.amount > 0)
+        _amountText = State(initialValue: TransactionAmountText.format(abs(tx.amount)))
+    }
+
+    private var magnitude: Double? { TransactionAmountText.parse(amountText) }
+    private var canSave: Bool { (magnitude ?? 0) > 0 && !edit.name.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                DatePicker("Date", selection: $edit.date, displayedComponents: .date)
+                TextField("Payee or description", text: $edit.name)
+                Picker("Type", selection: $isIncome) {
+                    Text("Expense").tag(false); Text("Income / deposit").tag(true)
+                }.pickerStyle(.segmented)
+                TextField("Amount", text: $amountText).keyboardType(.decimalPad)
+                Picker("Category", selection: $edit.category) {
+                    ForEach(categories.contains(edit.category) ? categories : categories + [edit.category], id: \.self) { Text($0).tag($0) }
+                }
+                Picker("Account", selection: $edit.accountId) {
+                    ForEach(accounts) { Text($0.name).tag($0.accountId) }
+                }
+                TextField("Note (optional)", text: $edit.memo, axis: .vertical)
+                Text(TransactionEditNotes.text(for: tx)).font(.caption).foregroundStyle(.secondary)
+            }
+            .navigationTitle("Edit Transaction")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        var e = edit
+                        e.amount = (isIncome ? 1 : -1) * (magnitude ?? abs(tx.amount))
+                        TransactionEditService.apply(e, to: tx, accounts: accounts, in: context)
+                        dismiss()
+                    }.disabled(!canSave)
+                }
+            }
+        }
     }
 }

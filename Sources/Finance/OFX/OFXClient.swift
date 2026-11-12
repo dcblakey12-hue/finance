@@ -220,6 +220,16 @@ enum PlaidMapping {
                               type: signed < 0 ? .debit : .credit, memo: "")
     }
 
+    /// The bank changed a transaction it reported before: take its new date, payee and amount,
+    /// except any of those you edited yourself. Category, notes and account are always yours.
+    @MainActor
+    static func applyModified(_ o: OFXTransaction, to r: TransactionRecord) {
+        let mine = r.editedFields
+        if !mine.contains(.date) { r.date = o.date }
+        if !mine.contains(.name) { r.name = o.name }
+        if !mine.contains(.amount) { r.amount = o.amount; r.typeRaw = o.type.rawValue }
+    }
+
     /// Plaid's first sync can include transactions already imported from OFX files. Pair each one with
     /// an existing, unclaimed record of the same amount within 2 days so it isn't added twice.
     /// Returns the Plaid transactions that are genuinely new and the existing records to re-tag.
@@ -575,7 +585,7 @@ enum PlaidSync {
         var modifiedCount = 0
         for t in modified {
             guard let acct = map[t.account_id], let o = PlaidMapping.convert(t, accountId: acct) else { continue }
-            if let r = byFitid[o.fitid] { r.date = o.date; r.name = o.name; r.amount = o.amount; r.typeRaw = o.type.rawValue; modifiedCount += 1 }
+            if let r = byFitid[o.fitid] { PlaidMapping.applyModified(o, to: r); modifiedCount += 1 }
             else { added.append(t) }
         }
         // New: group per destination account, skipping ones already imported from files.
