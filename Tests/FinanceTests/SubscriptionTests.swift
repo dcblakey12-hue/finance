@@ -190,6 +190,8 @@ final class SubscriptionTests: XCTestCase {
         let found = SubscriptionService.detect(rows, marks: marks, today: today, calendar: cal)[0]
         XCTAssertTrue(found.chargedAfterCancel)
         XCTAssertEqual(found.chargesSinceCancel.map { cal.component(.month, from: $0) }, [10])
+        XCTAssertEqual(SubscriptionService.savings([found]), 0, "still charging, so it saves nothing")
+        XCTAssertEqual(SubscriptionService.totals([found]).monthly, 15.49, accuracy: 0.001, "and it still counts in the totals")
 
         // A charge on the cancel day itself doesn't count (it was already on its way).
         SubscriptionService.set(.cancelled, for: s, in: context, cancelledOn: date(2026, 10, 7))

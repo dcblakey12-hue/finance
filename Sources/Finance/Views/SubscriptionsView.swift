@@ -112,7 +112,7 @@ struct SubscriptionsView: View {
                         Text(money(s.annualCost)).monospacedDigit()
                             .foregroundStyle(s.isCancelled && !s.chargedAfterCancel ? .green : .primary)
                             .frame(maxWidth: .infinity, alignment: .trailing)
-                            .help(s.isCancelled ? "What cancelling it saves you a year" : "")
+                            .help(s.chargedAfterCancel ? "Still charging you after you cancelled" : (s.isCancelled ? "What cancelling it saves you a year" : ""))
                     }.width(90)
                     TableColumn("") { s in
                         HStack(spacing: 4) {
@@ -157,7 +157,7 @@ struct SubscriptionsView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            Text("Found by looking for the same merchant charging a similar amount on a regular schedule. Totals leave out cancelled and dismissed ones, and any that seem to have stopped. Cancelled ones are watched: if they charge you again you'll see a warning. Double-click a row to see its charges.")
+            Text("Found by looking for the same merchant charging a similar amount on a regular schedule. Totals leave out cancelled and dismissed ones, and any that seem to have stopped (a cancelled one that still charges you stays in). Cancelled ones are watched: if they charge you again you'll see a warning. Double-click a row to see its charges.")
                 .font(.caption).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(8).background(.bar)
         }

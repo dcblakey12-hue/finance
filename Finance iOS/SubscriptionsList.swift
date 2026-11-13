@@ -20,8 +20,8 @@ struct SubscriptionsList: View {
         let review = all.filter { $0.status == .unreviewed }
         let confirmed = all.filter { $0.status == .confirmed }
         let dismissed = all.filter { $0.status == .dismissed }
-        let cancelled = all.filter(\.isCancelled)
-        let stillCharging = cancelled.filter(\.chargedAfterCancel)
+        let cancelled = all.filter { $0.isCancelled && !$0.chargedAfterCancel }
+        let stillCharging = all.filter(\.chargedAfterCancel)
 
         List {
             Section {
@@ -137,7 +137,7 @@ struct SubscriptionsList: View {
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
                     Text((s.isFixedAmount ? "" : "≈ ") + money(s.amount)).monospacedDigit()
-                    Text((s.isCancelled ? "saves " : "") + "\(money(s.annualCost))/yr").font(.caption2)
+                    Text((s.isCancelled && !s.chargedAfterCancel ? "saves " : "") + "\(money(s.annualCost))/yr").font(.caption2)
                         .foregroundStyle(s.isCancelled && !s.chargedAfterCancel ? .green : .secondary).monospacedDigit()
                 }
             }

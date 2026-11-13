@@ -318,14 +318,15 @@ enum SubscriptionService {
         .sorted { ($0.totals.monthly, $1.accountName) > ($1.totals.monthly, $0.accountName) }
     }
 
-    /// What your cancellations save a year (at the price you were paying).
+    /// What your cancellations save a year (at the price you were paying). One that still charges you saves nothing.
     static func savings(_ list: [DetectedSubscription]) -> Double {
-        list.filter(\.isCancelled).reduce(0) { $0 + $1.annualCost }
+        list.filter { $0.isCancelled && !$0.chargedAfterCancel }.reduce(0) { $0 + $1.annualCost }
     }
 
-    /// Estimated cost of the charges that count: confirmed or not yet reviewed, and still going.
+    /// Estimated cost of the charges that count: confirmed or not yet reviewed and still going, plus any you
+    /// cancelled that still charge you.
     static func totals(_ list: [DetectedSubscription]) -> (monthly: Double, annual: Double) {
-        let counted = list.filter { ($0.status == .confirmed || $0.status == .unreviewed) && !$0.mayHaveStopped }
+        let counted = list.filter { (($0.status == .confirmed || $0.status == .unreviewed) && !$0.mayHaveStopped) || $0.chargedAfterCancel }
         let monthly = counted.reduce(0) { $0 + $1.monthlyCost }
         return (monthly, monthly * 12)
     }
