@@ -442,8 +442,18 @@ enum DemoData {
             let categories = DemoData.categories.map {
                 BackupFile.CategoryRow(name: $0, createdAt: start)
             }
+            // Two cancelled subscriptions for the Subscriptions screen: one that stopped, and one that
+            // still charges after it was cancelled (so the warning shows).
+            let fitTrackLast = txs.filter { $0.name == "FITTRACK PREMIUM" }.map(\.date).max() ?? start
+            let marks: [BackupFile.SubscriptionMarkRow] = [
+                .init(merchantKey: "FITTRACK PREMIUM", accountId: DemoData.visa.id, cadenceRaw: "monthly", amount: 7.99,
+                      statusRaw: "cancelled", updatedAt: days(10, from: fitTrackLast), cancelledAt: days(10, from: fitTrackLast)),
+                .init(merchantKey: "MORNING LEDGER", accountId: DemoData.visa.id, cadenceRaw: "weekly", amount: 3.99,
+                      statusRaw: "cancelled", updatedAt: days(-16, from: today), cancelledAt: days(-16, from: today)),
+            ]
             return BackupFile(createdAt: createdAt, accounts: accounts, transactions: txs, envelopes: envelopes(),
-                              schedules: schedules(), profiles: [], rules: rules, categories: categories)
+                              schedules: schedules(), profiles: [], rules: rules, categories: categories,
+                              subscriptionMarks: marks)
         }
     }
 }

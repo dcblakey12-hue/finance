@@ -3,13 +3,14 @@ import SwiftData
 
 /// Which detected subscriptions to show.
 enum SubscriptionFilter: String, CaseIterable, Identifiable {
-    case active = "Subscriptions", review = "To Review", confirmed = "Confirmed", dismissed = "Dismissed"
+    case active = "Subscriptions", review = "To Review", confirmed = "Confirmed", cancelled = "Cancelled", dismissed = "Dismissed"
     var id: String { rawValue }
     func includes(_ s: DetectedSubscription) -> Bool {
         switch self {
-        case .active: return s.status != .dismissed
+        case .active: return s.status == .unreviewed || s.status == .confirmed || s.chargedAfterCancel
         case .review: return s.status == .unreviewed
         case .confirmed: return s.status == .confirmed
+        case .cancelled: return s.status == .cancelled
         case .dismissed: return s.status == .dismissed
         }
     }
@@ -25,6 +26,8 @@ struct SubscriptionsView: View {
     @State private var accountFilter: String?
     @State private var selection = Set<String>()
     @State private var showing: DetectedSubscription?
+    /// Picking the day a subscription was cancelled.
+    @State private var cancelling: DetectedSubscription?
 
     private func money(_ v: Double) -> String { currency.string(from: NSNumber(value: v)) ?? "" }
     private func day(_ d: Date) -> String { d.formatted(.dateTime.month(.abbreviated).day().year()) }
@@ -36,12 +39,15 @@ struct SubscriptionsView: View {
         let shown = listed.filter { accountFilter == nil || $0.accountId == accountFilter }
         let totals = SubscriptionService.totals(all)
         let toReview = all.filter { $0.status == .unreviewed }.count
+        let savings = SubscriptionService.savings(all)
+        let stillCharging = all.filter(\.chargedAfterCancel)
 
         VStack(spacing: 0) {
             HStack(spacing: 24) {
                 total("Estimated per month", money(totals.monthly))
                 total("Estimated per year", money(totals.annual))
-                total("Found", "\(all.filter { $0.status != .dismissed }.count)")
+                total("Found", "\(all.filter { $0.status == .unreviewed || $0.status == .confirmed }.count)")
+                if savings > 0 { total("Saved by cancelling", "\(money(savings))/yr", .green) }
                 Spacer()
                 Picker("Show", selection: $filter) {
                     ForEach(SubscriptionFilter.allCases) { f in
@@ -51,6 +57,16 @@ struct SubscriptionsView: View {
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
             }
             .padding()
+
+            if !stillCharging.isEmpty {
+                Label("Still charging after you cancelled: " + stillCharging.map { "\($0.name) (\(day($0.chargesSinceCancel.last!)))" }.joined(separator: ", ")
+                      + ". Check the cancellation went through, and ask for a refund.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout).foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10).background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.horizontal).padding(.bottom, 8)
+            }
 
             if groups.count > 1 || accountFilter != nil { accountStrip(groups, total: listed) }
 
@@ -79,17 +95,24 @@ struct SubscriptionsView: View {
                     }.width(90)
                     TableColumn("Last charge") { s in Text(day(s.lastCharge)) }.width(100)
                     TableColumn("Next expected") { s in
-                        Text(day(s.nextExpected))
-                            .foregroundStyle(s.nextExpected < Calendar.current.startOfDay(for: Date()) ? .orange : .primary)
-                            .help(s.mayHaveStopped ? "No charge since it was due. It may have been cancelled." : "")
-                    }.width(100)
+                        if let c = s.cancelledAt {
+                            Text("Cancelled \(day(c))").foregroundStyle(s.chargedAfterCancel ? .red : .secondary)
+                                .help(s.chargedAfterCancel ? "Charged again on \(s.chargesSinceCancel.map(day).joined(separator: ", ")), after you cancelled" : "No charges since you cancelled")
+                        } else {
+                            Text(day(s.nextExpected))
+                                .foregroundStyle(s.nextExpected < Calendar.current.startOfDay(for: Date()) ? .orange : .primary)
+                                .help(s.mayHaveStopped ? "No charge since it was due. If you cancelled it, mark it Cancelled." : "")
+                        }
+                    }.width(min: 100, ideal: 130)
                     TableColumn("Monthly") { s in
                         Text(money(s.monthlyCost)).monospacedDigit().foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     }.width(80)
                     TableColumn("Yearly") { s in
                         Text(money(s.annualCost)).monospacedDigit()
+                            .foregroundStyle(s.isCancelled && !s.chargedAfterCancel ? .green : .primary)
                             .frame(maxWidth: .infinity, alignment: .trailing)
+                            .help(s.isCancelled ? "What cancelling it saves you a year" : "")
                     }.width(90)
                     TableColumn("") { s in
                         HStack(spacing: 4) {
@@ -97,7 +120,11 @@ struct SubscriptionsView: View {
                                 Button { set(.confirmed, s) } label: { Image(systemName: "checkmark.circle") }
                                     .help("Yes, this is a subscription")
                             }
-                            if s.status != .dismissed {
+                            if s.status != .cancelled {
+                                Button { cancelling = s } label: { Image(systemName: "nosign") }
+                                    .help("I cancelled it: move it to Cancelled and count what it saves")
+                            }
+                            if s.status != .dismissed && s.status != .cancelled {
                                 Button { set(.dismissed, s) } label: { Image(systemName: "xmark.circle") }
                                     .help("Not a subscription: hide it and leave it out of the totals")
                             }
@@ -107,12 +134,16 @@ struct SubscriptionsView: View {
                             }
                         }
                         .buttonStyle(.borderless)
-                    }.width(80)
+                    }.width(100)
                 }
                 .contextMenu(forSelectionType: String.self) { ids in
                     let picked = shown.filter { ids.contains($0.id) }
                     if !picked.isEmpty {
                         Button("Mark as Subscription") { picked.forEach { set(.confirmed, $0) } }
+                        Button("I Cancelled It") { picked.forEach { set(.cancelled, $0) } }
+                        if picked.count == 1, let s = picked.first {
+                            Button(s.isCancelled ? "Change Cancel Date…" : "I Cancelled It On…") { cancelling = s }
+                        }
                         Button("Not a Subscription") { picked.forEach { set(.dismissed, $0) } }
                         Button("Undo Choice") { picked.forEach { set(.unreviewed, $0) } }
                         if picked.count == 1, let s = picked.first {
@@ -126,11 +157,17 @@ struct SubscriptionsView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            Text("Found by looking for the same merchant charging a similar amount on a regular schedule. Totals leave out dismissed ones and any that seem to have stopped. Double-click a row to see its charges.")
+            Text("Found by looking for the same merchant charging a similar amount on a regular schedule. Totals leave out cancelled and dismissed ones, and any that seem to have stopped. Cancelled ones are watched: if they charge you again you'll see a warning. Double-click a row to see its charges.")
                 .font(.caption).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(8).background(.bar)
         }
         .navigationTitle("Subscriptions")
+        .sheet(item: $cancelling) { s in
+            CancelSubscriptionSheet(subscription: s) { date in
+                SubscriptionService.set(.cancelled, for: s, in: context, cancelledOn: date)
+                cancelling = nil
+            } onCancel: { cancelling = nil }
+        }
         .sheet(item: $showing) { s in
             SubscriptionChargesSheet(subscription: s, transactions: transactions.filter { s.transactionIds.contains($0.id) })
         }
@@ -172,6 +209,7 @@ struct SubscriptionsView: View {
         switch filter {
         case .active, .review: return "No recurring charges found"
         case .confirmed: return "Nothing confirmed yet"
+        case .cancelled: return "Nothing cancelled"
         case .dismissed: return "Nothing dismissed"
         }
     }
@@ -179,6 +217,7 @@ struct SubscriptionsView: View {
         switch filter {
         case .active, .review: return "A charge shows up here once the same merchant has billed a similar amount a few times on a regular schedule."
         case .confirmed: return "Click the check mark next to a charge to confirm it's a subscription."
+        case .cancelled: return "When you cancel a subscription, click the ⊘ button next to it. It moves here, leaves the totals, and you'll be warned if it charges you again."
         case .dismissed: return "Charges you say aren't subscriptions go here."
         }
     }
@@ -188,7 +227,11 @@ struct SubscriptionsView: View {
     }
 
     @ViewBuilder private func badge(_ s: DetectedSubscription) -> some View {
-        if s.mayHaveStopped {
+        if s.chargedAfterCancel {
+            tag("Charged after cancel", .red)
+        } else if s.isCancelled {
+            tag("Cancelled", .gray)
+        } else if s.mayHaveStopped {
             tag("Stopped?", .orange)
         } else if s.status == .confirmed {
             tag("Confirmed", .green)
@@ -201,11 +244,40 @@ struct SubscriptionsView: View {
             .background(color.opacity(0.18), in: Capsule()).foregroundStyle(color)
     }
 
-    private func total(_ title: String, _ value: String) -> some View {
+    private func total(_ title: String, _ value: String, _ color: Color = .primary) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title3.bold()).monospacedDigit()
+            Text(value).font(.title3.bold()).monospacedDigit().foregroundStyle(color)
         }
+    }
+}
+
+/// Mark a subscription cancelled, on the day you cancelled it.
+struct CancelSubscriptionSheet: View {
+    let subscription: DetectedSubscription
+    let onSave: (Date) -> Void
+    let onCancel: () -> Void
+    @State private var date: Date
+
+    init(subscription: DetectedSubscription, onSave: @escaping (Date) -> Void, onCancel: @escaping () -> Void) {
+        self.subscription = subscription; self.onSave = onSave; self.onCancel = onCancel
+        _date = State(initialValue: subscription.cancelledAt ?? Date())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Cancelled \(subscription.name)").font(.headline)
+            Text("It leaves your totals and counts as saving \(currency.string(from: NSNumber(value: subscription.annualCost)) ?? "") a year. If a charge still comes through after this day, Finance will warn you.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            DatePicker("Cancelled on", selection: $date, in: ...Date(), displayedComponents: .date)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { onCancel() }.keyboardShortcut(.cancelAction)
+                Button("Mark Cancelled") { onSave(date) }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding()
+        .frame(width: 400)
     }
 }
 

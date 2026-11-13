@@ -16,9 +16,11 @@ final class SubscriptionMark {
     var accountId: String = ""
     /// Amount (positive) of the charge when you decided.
     var amount: Double = 0
-    /// "confirmed" | "dismissed"
+    /// "confirmed" | "dismissed" | "cancelled"
     var statusRaw: String = "confirmed"
     var updatedAt: Date = Date()
+    /// The day you cancelled it (status "cancelled" only).
+    var cancelledAt: Date? = nil
 
     init(merchantKey: String, accountId: String = "", cadence: SubscriptionCadence, amount: Double, status: SubscriptionStatus, now: Date = Date()) {
         self.merchantKey = merchantKey; self.accountId = accountId; self.cadenceRaw = cadence.rawValue; self.amount = abs(amount)
@@ -28,7 +30,9 @@ final class SubscriptionMark {
     var cadence: SubscriptionCadence? { SubscriptionCadence(rawValue: cadenceRaw) }
 }
 
-enum SubscriptionStatus: String, Codable { case unreviewed, confirmed, dismissed }
+/// unreviewed: found, not looked at yet. confirmed: a subscription you're keeping. dismissed: not a
+/// subscription. cancelled: a subscription you've stopped (it leaves the totals and counts as a saving).
+enum SubscriptionStatus: String, Codable { case unreviewed, confirmed, dismissed, cancelled }
 
 enum SubscriptionCadence: String, CaseIterable, Codable, Identifiable {
     case weekly, biweekly, monthly, quarterly, yearly
@@ -116,7 +120,17 @@ struct DetectedSubscription: Identifiable, Equatable {
     let transactionIds: [UUID]
     /// No charge for a while after it was due: maybe cancelled.
     let mayHaveStopped: Bool
+    /// Stopped so long ago it's only worth showing if you marked it cancelled.
+    var isLongGone: Bool = false
     var status: SubscriptionStatus = .unreviewed
+    /// When you cancelled it (cancelled only).
+    var cancelledAt: Date? = nil
+    /// Charges dated after the day you cancelled: it's still billing you.
+    var chargesSinceCancel: [Date] = []
+
+    var isCancelled: Bool { status == .cancelled }
+    /// Cancelled, but a charge came through after the cancel date.
+    var chargedAfterCancel: Bool { isCancelled && !chargesSinceCancel.isEmpty }
 
     var monthlyCost: Double { amount * cadence.perYear / 12 }
     var annualCost: Double { amount * cadence.perYear }
@@ -175,9 +189,18 @@ enum SubscriptionService {
                 found.append(s)
             }
         }
-        return found.map { s in
+        return found.compactMap { s in
             var s = s
-            s.status = match(s, in: marks)?.status ?? .unreviewed
+            let mark = match(s, in: marks)
+            s.status = mark?.status ?? .unreviewed
+            if s.isCancelled {
+                let cancelled = calendar.startOfDay(for: mark?.cancelledAt ?? mark?.updatedAt ?? today)
+                s.cancelledAt = cancelled
+                let dayAfter = calendar.date(byAdding: .day, value: 1, to: cancelled) ?? cancelled
+                s.chargesSinceCancel = rows.filter { s.transactionIds.contains($0.id) && $0.date >= dayAfter }.map(\.date).sorted()
+            } else if s.isLongGone {
+                return nil
+            }
             return s
         }
         .sorted { ($0.mayHaveStopped ? 1 : 0, -$0.monthlyCost, $0.name) < ($1.mayHaveStopped ? 1 : 0, -$1.monthlyCost, $1.name) }
@@ -226,8 +249,8 @@ enum SubscriptionService {
         let grace = max(7, cadence.typicalDays / 2)
         let overdue = Double(calendar.dateComponents([.day], from: next, to: calendar.startOfDay(for: today)).day ?? 0)
         let stopped = overdue > grace
-        // Don't keep long-gone charges around: only ones recent enough to still be worth a look.
-        if stopped && overdue > max(cadence.typicalDays * 2, 90) { return nil }
+        // Long-gone charges are only kept if you marked them cancelled (see `detect`).
+        let longGone = stopped && overdue > max(cadence.typicalDays * 2, 90)
         let amounts = ordered.map { abs($0.amount) }
         return DetectedSubscription(
             merchantKey: merchantKey, name: displayName(merchantKey), cadence: cadence,
@@ -235,7 +258,7 @@ enum SubscriptionService {
             isFixedAmount: amounts.allSatisfy { abs($0 - amounts[0]) < 0.005 },
             chargeCount: ordered.count, firstCharge: first.date, lastCharge: last.date, nextExpected: next,
             category: last.category, accountName: last.accountName, accountId: last.accountId,
-            transactionIds: ordered.map(\.id), mayHaveStopped: stopped)
+            transactionIds: ordered.map(\.id), mayHaveStopped: stopped, isLongGone: longGone)
     }
 
     /// Readable merchant name from its key: "TUNEBOX MUSIC" → "Tunebox Music".
@@ -264,14 +287,18 @@ enum SubscriptionService {
         }, marks: marks, today: today, calendar: calendar)
     }
 
-    /// Save your decision (confirmed / dismissed), or clear it with `.unreviewed`.
+    /// Save your decision (confirmed / dismissed / cancelled), or clear it with `.unreviewed`.
+    /// A cancellation is dated `cancelledOn` (default: today).
     @MainActor
-    static func set(_ status: SubscriptionStatus, for s: DetectedSubscription, in context: ModelContext, now: Date = Date()) {
+    static func set(_ status: SubscriptionStatus, for s: DetectedSubscription, in context: ModelContext, now: Date = Date(),
+                    cancelledOn: Date? = nil) {
         let marks = (try? context.fetch(FetchDescriptor<SubscriptionMark>())) ?? []
         let existing = marks.filter { matches($0, s) }
         for m in existing { context.delete(m) }
         if status != .unreviewed {
-            context.insert(SubscriptionMark(merchantKey: s.merchantKey, accountId: s.accountId, cadence: s.cadence, amount: s.amount, status: status, now: now))
+            let mark = SubscriptionMark(merchantKey: s.merchantKey, accountId: s.accountId, cadence: s.cadence, amount: s.amount, status: status, now: now)
+            if status == .cancelled { mark.cancelledAt = cancelledOn ?? now }
+            context.insert(mark)
         }
         try? context.save()
     }
@@ -291,9 +318,14 @@ enum SubscriptionService {
         .sorted { ($0.totals.monthly, $1.accountName) > ($1.totals.monthly, $0.accountName) }
     }
 
+    /// What your cancellations save a year (at the price you were paying).
+    static func savings(_ list: [DetectedSubscription]) -> Double {
+        list.filter(\.isCancelled).reduce(0) { $0 + $1.annualCost }
+    }
+
     /// Estimated cost of the charges that count: confirmed or not yet reviewed, and still going.
     static func totals(_ list: [DetectedSubscription]) -> (monthly: Double, annual: Double) {
-        let counted = list.filter { $0.status != .dismissed && !$0.mayHaveStopped }
+        let counted = list.filter { ($0.status == .confirmed || $0.status == .unreviewed) && !$0.mayHaveStopped }
         let monthly = counted.reduce(0) { $0 + $1.monthlyCost }
         return (monthly, monthly * 12)
     }
