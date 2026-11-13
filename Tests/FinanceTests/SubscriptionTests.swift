@@ -153,4 +153,66 @@ final class SubscriptionTests: XCTestCase {
         XCTAssertNil(byKey["CEDAR RIDGE"], "the mortgage isn't a subscription")
         XCTAssertNil(byKey["FRESH BASKET"], "groceries aren't a subscription")
     }
+
+    private func store() throws -> ModelContext {
+        let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
+        let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        return ModelContext(container)
+    }
+
+    func testCancelledLeavesTotalsCountsSavingsAndStaysListedAfterItStops() throws {
+        let context = try store()
+        let rows = (5...10).map { charge("STREAMFLIX", -15.49, date(2026, $0, 7)) }
+        let s = SubscriptionService.detect(rows, today: today, calendar: cal)[0]
+        SubscriptionService.set(.cancelled, for: s, in: context, cancelledOn: date(2026, 10, 20))
+        let marks = try context.fetch(FetchDescriptor<SubscriptionMark>())
+
+        let found = SubscriptionService.detect(rows, marks: marks, today: today, calendar: cal)
+        XCTAssertEqual(found[0].status, .cancelled)
+        XCTAssertEqual(found[0].cancelledAt, cal.startOfDay(for: date(2026, 10, 20)))
+        XCTAssertFalse(found[0].chargedAfterCancel)
+        XCTAssertEqual(SubscriptionService.totals(found).monthly, 0)
+        XCTAssertEqual(SubscriptionService.savings(found), 15.49 * 12, accuracy: 0.001)
+
+        // Months later it would normally drop off the list as long gone; a cancelled one stays.
+        let later = cal.date(from: DateComponents(year: 2027, month: 6, day: 1))!
+        XCTAssertTrue(SubscriptionService.detect(rows, today: later, calendar: cal).isEmpty)
+        XCTAssertEqual(SubscriptionService.detect(rows, marks: marks, today: later, calendar: cal).first?.status, .cancelled)
+    }
+
+    func testChargeAfterCancellingIsFlagged() throws {
+        let context = try store()
+        let rows = (5...10).map { charge("STREAMFLIX", -15.49, date(2026, $0, 7)) }
+        let s = SubscriptionService.detect(rows, today: today, calendar: cal)[0]
+        SubscriptionService.set(.cancelled, for: s, in: context, cancelledOn: date(2026, 9, 20))
+        let marks = try context.fetch(FetchDescriptor<SubscriptionMark>())
+        let found = SubscriptionService.detect(rows, marks: marks, today: today, calendar: cal)[0]
+        XCTAssertTrue(found.chargedAfterCancel)
+        XCTAssertEqual(found.chargesSinceCancel.map { cal.component(.month, from: $0) }, [10])
+        XCTAssertEqual(SubscriptionService.savings([found]), 0, "still charging, so it saves nothing")
+        XCTAssertEqual(SubscriptionService.totals([found]).monthly, 15.49, accuracy: 0.001, "and it still counts in the totals")
+
+        // A charge on the cancel day itself doesn't count (it was already on its way).
+        SubscriptionService.set(.cancelled, for: s, in: context, cancelledOn: date(2026, 10, 7))
+        let again = try context.fetch(FetchDescriptor<SubscriptionMark>())
+        XCTAssertEqual(again.count, 1)
+        XCTAssertFalse(SubscriptionService.detect(rows, marks: again, today: today, calendar: cal)[0].chargedAfterCancel)
+
+        // The cancel date survives a backup.
+        let file = BackupService.snapshot(in: context)
+        BackupService.restore(file, in: context)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<SubscriptionMark>()).first?.cancelledAt, date(2026, 10, 7))
+    }
+
+    func testDemoShowsACancelledAndAStillChargingSubscription() throws {
+        let context = try store()
+        BackupService.restore(DemoData.make(today: today, calendar: cal), in: context)
+        let found = SubscriptionService.detect(transactions: try context.fetch(FetchDescriptor<TransactionRecord>()),
+                                               marks: try context.fetch(FetchDescriptor<SubscriptionMark>()), today: today, calendar: cal)
+        let byKey = Dictionary(found.map { ($0.merchantKey, $0) }, uniquingKeysWith: { a, _ in a })
+        XCTAssertEqual(byKey["FITTRACK PREMIUM"]?.status, .cancelled)
+        XCTAssertEqual(byKey["FITTRACK PREMIUM"]?.chargedAfterCancel, false)
+        XCTAssertEqual(byKey["MORNING LEDGER"]?.chargedAfterCancel, true)
+    }
 }

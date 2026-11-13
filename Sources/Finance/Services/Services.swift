@@ -617,7 +617,7 @@ struct BackupFile: Codable, Equatable {
     struct ProfileRow: Codable, Equatable { var id: UUID; var bankName: String; var ofxHomeURL: String; var username: String; var accountId: String; var clientUID: String; var lastSync: Date? }
     struct RuleRow: Codable, Equatable { var merchantKey: String; var category: String; var createdAt: Date; var updatedAt: Date }
     struct CategoryRow: Codable, Equatable { var name: String; var createdAt: Date }
-    struct SubscriptionMarkRow: Codable, Equatable { var merchantKey: String; var accountId: String? = nil; var cadenceRaw: String; var amount: Double; var statusRaw: String; var updatedAt: Date }
+    struct SubscriptionMarkRow: Codable, Equatable { var merchantKey: String; var accountId: String? = nil; var cadenceRaw: String; var amount: Double; var statusRaw: String; var updatedAt: Date; var cancelledAt: Date? = nil }
 
     var format: Int = 1
     var createdAt: Date
@@ -652,7 +652,7 @@ enum BackupService {
             profiles: all(OFXProfile.self).map { .init(id: $0.id, bankName: $0.bankName, ofxHomeURL: $0.ofxHomeURL, username: $0.username, accountId: $0.accountId, clientUID: $0.clientUID, lastSync: $0.lastSync) },
             rules: all(CategoryRule.self).map { .init(merchantKey: $0.merchantKey, category: $0.category, createdAt: $0.createdAt, updatedAt: $0.updatedAt) },
             categories: all(CustomCategory.self).map { .init(name: $0.name, createdAt: $0.createdAt) },
-            subscriptionMarks: all(SubscriptionMark.self).map { .init(merchantKey: $0.merchantKey, accountId: $0.accountId, cadenceRaw: $0.cadenceRaw, amount: $0.amount, statusRaw: $0.statusRaw, updatedAt: $0.updatedAt) })
+            subscriptionMarks: all(SubscriptionMark.self).map { .init(merchantKey: $0.merchantKey, accountId: $0.accountId, cadenceRaw: $0.cadenceRaw, amount: $0.amount, statusRaw: $0.statusRaw, updatedAt: $0.updatedAt, cancelledAt: $0.cancelledAt) })
     }
 
     static func encode(_ file: BackupFile) throws -> Data {
@@ -703,7 +703,7 @@ enum BackupService {
         for c in file.categories { context.insert(CustomCategory(name: c.name, createdAt: c.createdAt)) }
         for m in file.subscriptionMarks ?? [] {
             let mark = SubscriptionMark(merchantKey: m.merchantKey, accountId: m.accountId ?? "", cadence: .monthly, amount: m.amount, status: .confirmed, now: m.updatedAt)
-            mark.cadenceRaw = m.cadenceRaw; mark.statusRaw = m.statusRaw; context.insert(mark)
+            mark.cadenceRaw = m.cadenceRaw; mark.statusRaw = m.statusRaw; mark.cancelledAt = m.cancelledAt; context.insert(mark)
         }
         try? context.save()
     }
