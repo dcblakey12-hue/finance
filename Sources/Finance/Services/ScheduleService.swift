@@ -368,7 +368,13 @@ enum ScheduleService {
                     guard !used.contains(t.id), (t.amount > 0) == b.isIncome,
                           b.accountId == nil || b.accountId == t.accountId,
                           days(t) <= matchWindowDays else { return false }
-                    let tolerance = samePayee(t.name, b.name) ? 0.35 : 0.15
+                    let payee = samePayee(t.name, b.name)
+                    // A payment that isn't due yet, from a payee with another name, only counts as paid
+                    // early at (nearly) the exact amount: otherwise any similar-sized bill a few days
+                    // earlier (car insurance $138 vs an electric bill of about $125) would mark next
+                    // week's bill as paid.
+                    let early = item.date > todayStart
+                    let tolerance = payee ? 0.35 : (early ? 0.02 : 0.15)
                     guard abs(abs(t.amount) - size) <= max(1, size * tolerance) else { return false }
                     return nearestOccurrence(of: rule, to: t.date, calendar: calendar) == item.date
                 }

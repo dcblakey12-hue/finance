@@ -107,6 +107,7 @@ struct RootView: View {
             if demo { demoBar }
             tabs
         }
+        .billReminders()
         .confirmationDialog("Leave the demo?", isPresented: $confirmingLeave, titleVisibility: .visible) {
             Button("Leave Demo") { demo = false }
         } message: {
