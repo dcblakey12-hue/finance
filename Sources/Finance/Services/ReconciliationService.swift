@@ -17,9 +17,10 @@ import SwiftUI
 
 extension TransactionRecord {
     /// Confirmed by the bank (synced or imported), or ticked as reconciled by you.
-    @MainActor var isReconciled: Bool { !ManualTransactionService.isManual(self) || reconciledByHand }
+    @MainActor var isReconciled: Bool { (!ManualTransactionService.isManual(self) && !isPending) || reconciledByHand }
     /// Entered by hand and not reconciled yet: counted in the balance, but not in the bank's figure.
-    @MainActor var isOutstanding: Bool { !isReconciled }
+    /// (A pending bank transaction is neither: it isn't in the balance at all until it posts.)
+    @MainActor var isOutstanding: Bool { !isReconciled && !isPending }
 }
 
 /// The two balances for an account (or several added together).
@@ -73,13 +74,16 @@ struct ReconciliationMarker: View {
 
     var body: some View {
         let t = transaction
-        Image(systemName: !t.isReconciled ? "circle.dashed"
+        let pending = t.isPending || (t.bankPendingId != nil && !t.isReconciled)
+        Image(systemName: pending ? "clock" : !t.isReconciled ? "circle.dashed"
                           : t.reconciledByHand ? "checkmark.circle" : "checkmark.circle.fill")
-            .foregroundStyle(t.isReconciled ? Color.green : Color.orange)
+            .foregroundStyle(pending ? Color.blue : t.isReconciled ? Color.green : Color.orange)
             .accessibilityLabel(Self.help(t))
     }
 
     static func help(_ t: TransactionRecord) -> String {
+        if t.isPending { return "Pending at the bank: not posted yet, so it isn't in the balance" }
+        if t.bankPendingId != nil && !t.isReconciled { return "Outstanding: the bank shows it as pending; it reconciles when the bank posts it" }
         if !t.isReconciled { return "Outstanding: entered by hand and not reported by the bank yet" }
         if ManualTransactionService.isManual(t) { return "Reconciled: entered by hand and marked reconciled by you" }
         return "Reconciled: confirmed by a bank sync or file import"

@@ -47,7 +47,7 @@ struct TransactionsView: View {
                              : (accounts.first { $0.accountId == filters.accountId }?.balance ?? 0)
     }
     private var balances: [UUID: Double] {
-        RunningBalance.compute(newestFirst: inScope.map { ($0.id, $0.amount) }, endingBalance: endingBalance)
+        RunningBalance.compute(newestFirst: inScope.map { ($0.id, $0.isPending ? 0 : $0.amount) }, endingBalance: endingBalance)
     }
     /// Reconciled and outstanding balances for the selected account (or all accounts).
     private var reconciliation: ReconciliationSummary {

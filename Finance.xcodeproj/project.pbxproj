@@ -55,6 +55,9 @@
 		DC3D94FECF723B55976046D7 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 485883D43B4EB32FBE31E970 /* SettingsView.swift */; };
 		E5A734C78CD86F551F76BF72 /* ForecastService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA6EB2CEEA70D3F7B30E17B /* ForecastService.swift */; };
 		E772B10D963422D3A2E21810 /* BudgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71BB55ED234FAFD2B60FE3AA /* BudgetView.swift */; };
+		7C0DE66D806F397FB72CE23D /* PlaidSyncApply.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DEB501BC8C9AB1C097D97 /* PlaidSyncApply.swift */; };
+		7C0DE2193C318083601369FF /* PlaidSyncReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DE41E0515A63BC691166D /* PlaidSyncReportView.swift */; };
+		7C0DE544C4FDF8EDD5E01ABA /* PlaidPendingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DEA914ACB0C588E4CEE2B /* PlaidPendingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -112,6 +115,9 @@
 		E8E201A73BF8912E6968E30B /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		EAA6EB2CEEA70D3F7B30E17B /* ForecastService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForecastService.swift; sourceTree = "<group>"; };
 		FFFDF0DBB82276AB0EA3AF93 /* CashFlowForecastTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CashFlowForecastTests.swift; sourceTree = "<group>"; };
+		7C0DEB501BC8C9AB1C097D97 /* PlaidSyncApply.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaidSyncApply.swift; sourceTree = "<group>"; };
+		7C0DE41E0515A63BC691166D /* PlaidSyncReportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaidSyncReportView.swift; sourceTree = "<group>"; };
+		7C0DEA914ACB0C588E4CEE2B /* PlaidPendingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaidPendingTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -175,6 +181,7 @@
 		7D038059ECF8F2369BEED845 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				7C0DE41E0515A63BC691166D /* PlaidSyncReportView.swift */,
 				E5CBF36F2E8FE713E6585EE3 /* AccountsView.swift */,
 				27A5B9CC01AA19D99E5CA880 /* ScheduledView.swift */,
 				C07B21EFDB8956BCA637928B /* CategoryViews.swift */,
@@ -197,6 +204,7 @@
 		914520AC9DA041F907207B74 /* OFX */ = {
 			isa = PBXGroup;
 			children = (
+				7C0DEB501BC8C9AB1C097D97 /* PlaidSyncApply.swift */,
 				B270CC70DE721FEF31BB6FD7 /* OFXClient.swift */,
 				995CBA33A42DC78167ECC5DB /* OFXParser.swift */,
 			);
@@ -216,6 +224,7 @@
 		E8639DD6B9D51869EAD496FF /* FinanceTests */ = {
 			isa = PBXGroup;
 			children = (
+				7C0DEA914ACB0C588E4CEE2B /* PlaidPendingTests.swift */,
 				FFFDF0DBB82276AB0EA3AF93 /* CashFlowForecastTests.swift */,
 				C47E0A1B2C3D4E5F60718296 /* CategorizerTests.swift */,
 				0C68FA07408923BA45C57D27 /* ScheduleAndCategoryTests.swift */,
@@ -376,6 +385,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7C0DE544C4FDF8EDD5E01ABA /* PlaidPendingTests.swift in Sources */,
 				39699924A4D30783D9619098 /* CashFlowForecastTests.swift in Sources */,
 				C47E0A1B2C3D4E5F60718295 /* CategorizerTests.swift in Sources */,
 				08AAD6BA28CF0019FCE6BF3D /* ScheduleAndCategoryTests.swift in Sources */,
@@ -409,6 +419,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7C0DE2193C318083601369FF /* PlaidSyncReportView.swift in Sources */,
+				7C0DE66D806F397FB72CE23D /* PlaidSyncApply.swift in Sources */,
 				93878AF8C1CD17AC49BD4B47 /* AccountsView.swift in Sources */,
 				CD48D6D3A15DD2DDD7067A5C /* ScheduledView.swift in Sources */,
 				8CFF2BC649F61ABC3AAD147B /* CategoryViews.swift in Sources */,

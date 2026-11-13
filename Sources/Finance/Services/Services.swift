@@ -13,7 +13,11 @@ import UIKit
 
 @MainActor
 final class TransactionImportService {
-    func importParsed(_ parsed: ParsedOFXFile, into context: ModelContext) -> (inserted: Int, skipped: Int) {
+    /// `pendingIds` maps a posted transaction's fitid to the pending transaction it replaces (Plaid), so a
+    /// hand-entered entry linked to that pending one is replaced even if the final amount differs (a tip).
+    /// `onMatch` is told about each hand-entered transaction the bank's record replaced.
+    func importParsed(_ parsed: ParsedOFXFile, into context: ModelContext, pendingIds: [String: String] = [:],
+                      onMatch: (_ bank: TransactionRecord, _ manualName: String, _ manualAmount: Double) -> Void = { _, _, _ in }) -> (inserted: Int, skipped: Int) {
         // Upsert account
         let acctId = parsed.accountId
         let account: Account
@@ -41,8 +45,10 @@ final class TransactionImportService {
             let rec = TransactionRecord(fitid: t.fitid, accountId: acctId, accountName: account.name, date: t.date, name: t.name, amount: t.amount, type: t.type, category: category, memo: t.memo)
             // Replace the matching hand-entered transaction so it isn't counted twice,
             // keeping the category you chose and any transfer link.
-            if let i = manual.firstIndex(where: { ManualTransactionService.matches($0, amount: t.amount, date: t.date) }) {
+            let linked = pendingIds[t.fitid].flatMap { pid in manual.firstIndex { $0.bankPendingId == pid } }
+            if let i = linked ?? manual.firstIndex(where: { ManualTransactionService.matches($0, amount: t.amount, date: t.date) }) {
                 let m = manual.remove(at: i)
+                onMatch(rec, m.name, m.amount)
                 if m.category != Categorizer.uncategorized { rec.category = m.category }
                 if rec.memo.isEmpty { rec.memo = m.memo }
                 rec.transferPeerId = m.transferPeerId
@@ -214,7 +220,7 @@ enum ManualTransactionService {
 
     /// Would `t` (a hand-entered record) be the same purchase as an imported one?
     static func matches(_ t: TransactionRecord, amount: Double, date: Date, calendar: Calendar = .current) -> Bool {
-        guard t.amount == amount else { return false }
+        guard abs(t.amount - amount) < 0.005 else { return false }
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: t.date), to: calendar.startOfDay(for: date)).day ?? Int.max
         return abs(days) <= matchWindowDays
     }
@@ -606,6 +612,8 @@ struct BackupFile: Codable, Equatable {
         /// Missing in backups made before transactions could be edited.
         var editedFieldsRaw: String? = nil
         var sourceAccountId: String? = nil
+        var isPending: Bool? = nil
+        var bankPendingId: String? = nil
     }
     struct EnvelopeRow: Codable, Equatable { var id: UUID; var category: String; var year: Int; var month: Int; var allocated: Double }
     struct ScheduleRow: Codable, Equatable {
@@ -646,7 +654,8 @@ enum BackupService {
                                                plaidLastSync: $0.plaidLastSync, plaidSyncFailedAt: $0.plaidSyncFailedAt, plaidSyncError: $0.plaidSyncError) },
             transactions: all(TransactionRecord.self).map { .init(id: $0.id, fitid: $0.fitid, accountId: $0.accountId, accountName: $0.accountName, date: $0.date, name: $0.name, amount: $0.amount, typeRaw: $0.typeRaw, category: $0.category, memo: $0.memo, transferPeerId: $0.transferPeerId,
                                                              reconciledByHand: $0.reconciledByHand ? true : nil,
-                                                             editedFieldsRaw: $0.editedFieldsRaw.isEmpty ? nil : $0.editedFieldsRaw, sourceAccountId: $0.sourceAccountId) },
+                                                             editedFieldsRaw: $0.editedFieldsRaw.isEmpty ? nil : $0.editedFieldsRaw, sourceAccountId: $0.sourceAccountId,
+                                                             isPending: $0.isPending ? true : nil, bankPendingId: $0.bankPendingId) },
             envelopes: all(Envelope.self).map { .init(id: $0.id, category: $0.category, year: $0.year, month: $0.month, allocated: $0.allocated) },
             schedules: all(RecurringBill.self).map { .init(id: $0.id, name: $0.name, amount: $0.amount, dueDay: $0.dueDay, category: $0.category, isActive: $0.isActive, lastPaid: $0.lastPaid, kindRaw: $0.kindRaw, fromAccountId: $0.fromAccountId, toAccountId: $0.toAccountId, frequencyRaw: $0.frequencyRaw, secondDay: $0.secondDay, anchorDate: $0.anchorDate, occurrenceLogRaw: $0.occurrenceLogRaw, accountId: $0.accountId, trackedSince: $0.trackedSince, endDate: $0.endDate) },
             profiles: all(OFXProfile.self).map { .init(id: $0.id, bankName: $0.bankName, ofxHomeURL: $0.ofxHomeURL, username: $0.username, accountId: $0.accountId, clientUID: $0.clientUID, lastSync: $0.lastSync) },
@@ -685,6 +694,7 @@ enum BackupService {
             r.transferPeerId = t.transferPeerId
             r.editedFieldsRaw = t.editedFieldsRaw ?? ""; r.sourceAccountId = t.sourceAccountId
             r.reconciledByHand = t.reconciledByHand ?? false
+            r.isPending = t.isPending ?? false; r.bankPendingId = t.bankPendingId
             context.insert(r)
         }
         for e in file.envelopes { context.insert(Envelope(id: e.id, category: e.category, year: e.year, month: e.month, allocated: e.allocated)) }
