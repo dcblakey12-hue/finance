@@ -5,6 +5,8 @@ import Charts
 /// The phone's overview: where you stand today, what the next 30 days look like (tap the chart for a
 /// day's balance and what moves it), net worth over time, and where the last 30 days went.
 struct OverviewTab: View {
+    private var spendingAlerts = CurrentAlerts()
+    @State private var showingAlertsScreen = false
     @Query(sort: \Account.name) private var allAccounts: [Account]
     @Query(sort: \TransactionRecord.date, order: .reverse) private var allTransactions: [TransactionRecord]
     @Query private var bills: [RecurringBill]
@@ -105,6 +107,11 @@ struct OverviewTab: View {
                 VStack(alignment: .leading, spacing: 14) {
                     let broken = PlaidSyncStatus.needingAttention(allAccounts)
                     if !broken.isEmpty { attentionBanner(broken) }
+                    let alerts = spendingAlerts.alerts
+                    if !alerts.isEmpty {
+                        NavigationLink { SpendingAlertsScreen() } label: { SpendingAlertsBanner(alerts: alerts) }
+                            .buttonStyle(.plain)
+                    }
                     ForEach(cardOrder) { c in
                         switch c {
                         case .tiles:
@@ -260,6 +267,7 @@ struct OverviewTab: View {
                 .padding(.horizontal, 12).padding(.vertical, 8)
             }
             .navigationTitle("Overview")
+            .navigationDestination(isPresented: $showingAlertsScreen) { SpendingAlertsScreen() }
             .sheet(isPresented: $reorderingCards) {
                 CardOrderSheet(order: cardOrder) { cardOrderRaw = $0.map(\.rawValue).joined(separator: ",") }
             }
@@ -270,6 +278,7 @@ struct OverviewTab: View {
                         Divider()
                         Button("All accounts") { accountIdsRaw = "" }
                         Divider()
+                        Button("Spending Alerts…", systemImage: "bell.badge") { showingAlertsScreen = true }
                         Button("Reorder Cards…") { reorderingCards = true }
                         Button("Reorder Tabs…", action: onReorderTabs)
                         Divider()

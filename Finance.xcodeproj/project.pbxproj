@@ -60,6 +60,11 @@
 		7C0DEB274E73296D0B327504 /* BillRemindersSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DE668B8A5256E3E2E39DC /* BillRemindersSettings.swift */; };
 		7C0DE61A2C76503AA9687BD2 /* BillRemindersSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DE668B8A5256E3E2E39DC /* BillRemindersSettings.swift */; };
 		7C0DE03FCCA562D6CECE75EA /* BillReminderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DE04807CE8315FD0B46C7 /* BillReminderTests.swift */; };
+		7C0DE47F2A84760BC868B6DB /* SpendingAlerts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DE7882C3BC286EFD92B0E /* SpendingAlerts.swift */; };
+		7C0DEDEECD97D60DEFFD2777 /* SpendingAlerts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DE7882C3BC286EFD92B0E /* SpendingAlerts.swift */; };
+		7C0DEDE33034EB28818EDFC4 /* SpendingAlertsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DE51FE38DDA95C9E4970F /* SpendingAlertsViews.swift */; };
+		7C0DEF029BB71E31C70598DF /* SpendingAlertsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DE51FE38DDA95C9E4970F /* SpendingAlertsViews.swift */; };
+		7C0DE1B91A1987F6AAB43569 /* SpendingAlertTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DE2EAFF216480A8C7F5A8 /* SpendingAlertTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -120,6 +125,9 @@
 		7C0DEC7182D1E822B8E7F763 /* BillReminders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillReminders.swift; sourceTree = "<group>"; };
 		7C0DE668B8A5256E3E2E39DC /* BillRemindersSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillRemindersSettings.swift; sourceTree = "<group>"; };
 		7C0DE04807CE8315FD0B46C7 /* BillReminderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillReminderTests.swift; sourceTree = "<group>"; };
+		7C0DE7882C3BC286EFD92B0E /* SpendingAlerts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpendingAlerts.swift; sourceTree = "<group>"; };
+		7C0DE51FE38DDA95C9E4970F /* SpendingAlertsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpendingAlertsViews.swift; sourceTree = "<group>"; };
+		7C0DE2EAFF216480A8C7F5A8 /* SpendingAlertTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpendingAlertTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -169,6 +177,7 @@
 			isa = PBXGroup;
 			children = (
 				7C0DEC7182D1E822B8E7F763 /* BillReminders.swift */,
+				7C0DE7882C3BC286EFD92B0E /* SpendingAlerts.swift */,
 				C47E0A1B2C3D4E5F60718294 /* CategorizationService.swift */,
 				089C8FB08398BD3B67513BF3 /* ScheduleService.swift */,
 				EAA6EB2CEEA70D3F7B30E17B /* ForecastService.swift */,
@@ -185,6 +194,7 @@
 			isa = PBXGroup;
 			children = (
 				7C0DE668B8A5256E3E2E39DC /* BillRemindersSettings.swift */,
+				7C0DE51FE38DDA95C9E4970F /* SpendingAlertsViews.swift */,
 				E5CBF36F2E8FE713E6585EE3 /* AccountsView.swift */,
 				27A5B9CC01AA19D99E5CA880 /* ScheduledView.swift */,
 				C07B21EFDB8956BCA637928B /* CategoryViews.swift */,
@@ -227,6 +237,7 @@
 			isa = PBXGroup;
 			children = (
 				7C0DE04807CE8315FD0B46C7 /* BillReminderTests.swift */,
+				7C0DE2EAFF216480A8C7F5A8 /* SpendingAlertTests.swift */,
 				FFFDF0DBB82276AB0EA3AF93 /* CashFlowForecastTests.swift */,
 				C47E0A1B2C3D4E5F60718296 /* CategorizerTests.swift */,
 				0C68FA07408923BA45C57D27 /* ScheduleAndCategoryTests.swift */,
@@ -388,6 +399,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7C0DE03FCCA562D6CECE75EA /* BillReminderTests.swift in Sources */,
+				7C0DE1B91A1987F6AAB43569 /* SpendingAlertTests.swift in Sources */,
 				39699924A4D30783D9619098 /* CashFlowForecastTests.swift in Sources */,
 				C47E0A1B2C3D4E5F60718295 /* CategorizerTests.swift in Sources */,
 				08AAD6BA28CF0019FCE6BF3D /* ScheduleAndCategoryTests.swift in Sources */,
@@ -406,6 +418,8 @@
 			files = (
 				7C0DE61A2C76503AA9687BD2 /* BillRemindersSettings.swift in Sources */,
 				7C0DE5DC7BFC394CE6776670 /* BillReminders.swift in Sources */,
+				7C0DEF029BB71E31C70598DF /* SpendingAlertsViews.swift in Sources */,
+				7C0DEDEECD97D60DEFFD2777 /* SpendingAlerts.swift in Sources */,
 				495923E9309EE956009B93EA /* CategorizationService.swift in Sources */,
 				495923EB309EE964009B93EA /* ForecastService.swift in Sources */,
 				495923EC309EE96B009B93EA /* Services.swift in Sources */,
@@ -425,6 +439,8 @@
 			files = (
 				7C0DEB274E73296D0B327504 /* BillRemindersSettings.swift in Sources */,
 				7C0DEA3839F4790D9D660BC7 /* BillReminders.swift in Sources */,
+				7C0DEDE33034EB28818EDFC4 /* SpendingAlertsViews.swift in Sources */,
+				7C0DE47F2A84760BC868B6DB /* SpendingAlerts.swift in Sources */,
 				93878AF8C1CD17AC49BD4B47 /* AccountsView.swift in Sources */,
 				CD48D6D3A15DD2DDD7067A5C /* ScheduledView.swift in Sources */,
 				8CFF2BC649F61ABC3AAD147B /* CategoryViews.swift in Sources */,

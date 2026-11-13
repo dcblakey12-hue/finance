@@ -21,6 +21,7 @@ struct SettingsView: View {
                 }
             }
             BillRemindersSettings()
+            SpendingAlertSettings()
             backupSection
             if !DemoMode.isOn { PlaidSettingsSection() }
             Section("Privacy") {

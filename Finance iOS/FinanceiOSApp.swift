@@ -28,7 +28,7 @@ struct FinanceiOSApp: App {
 final class Stores {
     static let schema = Schema([
         Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-        OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self,
+        OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self, DismissedAlert.self,
     ])
 
     /// Your data. Same switch as the Mac app: a "FinanceCloudContainer" string in this target's Info
@@ -108,6 +108,7 @@ struct RootView: View {
             tabs
         }
         .billReminders()
+        .spendingAlerts()
         .confirmationDialog("Leave the demo?", isPresented: $confirmingLeave, titleVisibility: .visible) {
             Button("Leave Demo") { demo = false }
         } message: {

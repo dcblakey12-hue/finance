@@ -668,7 +668,7 @@ enum BackupService {
     static func wipe(in context: ModelContext) {
         func clear<T: PersistentModel>(_: T.Type) { for x in (try? context.fetch(FetchDescriptor<T>())) ?? [] { context.delete(x) } }
         clear(TransactionRecord.self); clear(Account.self); clear(Envelope.self); clear(RecurringBill.self)
-        clear(OFXProfile.self); clear(CategoryRule.self); clear(CustomCategory.self); clear(SubscriptionMark.self)
+        clear(OFXProfile.self); clear(CategoryRule.self); clear(CustomCategory.self); clear(SubscriptionMark.self); clear(DismissedAlert.self)
         try? context.save()
     }
 
