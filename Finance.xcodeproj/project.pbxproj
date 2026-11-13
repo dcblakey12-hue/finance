@@ -71,6 +71,9 @@
 		7C0DEF21E739A753DD5F8944 /* SavingsGoalViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DEB0ABCC8D8A65CF24D62 /* SavingsGoalViews.swift */; };
 		7C0DEB9A91863BBE4C144169 /* SavingsGoalsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DEA0E0D696903F5FA2D12 /* SavingsGoalsView.swift */; };
 		7C0DE6F6842B42385D16BF6E /* SavingsGoalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DEE9E787CFCF436402E31 /* SavingsGoalTests.swift */; };
+		7C0DE66D806F397FB72CE23D /* PlaidSyncApply.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DEB501BC8C9AB1C097D97 /* PlaidSyncApply.swift */; };
+		7C0DE2193C318083601369FF /* PlaidSyncReportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DE41E0515A63BC691166D /* PlaidSyncReportView.swift */; };
+		7C0DE544C4FDF8EDD5E01ABA /* PlaidPendingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C0DEA914ACB0C588E4CEE2B /* PlaidPendingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -138,6 +141,9 @@
 		7C0DEB0ABCC8D8A65CF24D62 /* SavingsGoalViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavingsGoalViews.swift; sourceTree = "<group>"; };
 		7C0DEA0E0D696903F5FA2D12 /* SavingsGoalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavingsGoalsView.swift; sourceTree = "<group>"; };
 		7C0DEE9E787CFCF436402E31 /* SavingsGoalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavingsGoalTests.swift; sourceTree = "<group>"; };
+		7C0DEB501BC8C9AB1C097D97 /* PlaidSyncApply.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaidSyncApply.swift; sourceTree = "<group>"; };
+		7C0DE41E0515A63BC691166D /* PlaidSyncReportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaidSyncReportView.swift; sourceTree = "<group>"; };
+		7C0DEA914ACB0C588E4CEE2B /* PlaidPendingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaidPendingTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -208,6 +214,7 @@
 				7C0DE51FE38DDA95C9E4970F /* SpendingAlertsViews.swift */,
 				7C0DEA0E0D696903F5FA2D12 /* SavingsGoalsView.swift */,
 				7C0DEB0ABCC8D8A65CF24D62 /* SavingsGoalViews.swift */,
+				7C0DE41E0515A63BC691166D /* PlaidSyncReportView.swift */,
 				E5CBF36F2E8FE713E6585EE3 /* AccountsView.swift */,
 				27A5B9CC01AA19D99E5CA880 /* ScheduledView.swift */,
 				C07B21EFDB8956BCA637928B /* CategoryViews.swift */,
@@ -230,6 +237,7 @@
 		914520AC9DA041F907207B74 /* OFX */ = {
 			isa = PBXGroup;
 			children = (
+				7C0DEB501BC8C9AB1C097D97 /* PlaidSyncApply.swift */,
 				B270CC70DE721FEF31BB6FD7 /* OFXClient.swift */,
 				995CBA33A42DC78167ECC5DB /* OFXParser.swift */,
 			);
@@ -252,6 +260,7 @@
 				7C0DE04807CE8315FD0B46C7 /* BillReminderTests.swift */,
 				7C0DE2EAFF216480A8C7F5A8 /* SpendingAlertTests.swift */,
 				7C0DEE9E787CFCF436402E31 /* SavingsGoalTests.swift */,
+				7C0DEA914ACB0C588E4CEE2B /* PlaidPendingTests.swift */,
 				FFFDF0DBB82276AB0EA3AF93 /* CashFlowForecastTests.swift */,
 				C47E0A1B2C3D4E5F60718296 /* CategorizerTests.swift */,
 				0C68FA07408923BA45C57D27 /* ScheduleAndCategoryTests.swift */,
@@ -415,6 +424,7 @@
 				7C0DE03FCCA562D6CECE75EA /* BillReminderTests.swift in Sources */,
 				7C0DE1B91A1987F6AAB43569 /* SpendingAlertTests.swift in Sources */,
 				7C0DE6F6842B42385D16BF6E /* SavingsGoalTests.swift in Sources */,
+				7C0DE544C4FDF8EDD5E01ABA /* PlaidPendingTests.swift in Sources */,
 				39699924A4D30783D9619098 /* CashFlowForecastTests.swift in Sources */,
 				C47E0A1B2C3D4E5F60718295 /* CategorizerTests.swift in Sources */,
 				08AAD6BA28CF0019FCE6BF3D /* ScheduleAndCategoryTests.swift in Sources */,
@@ -461,6 +471,8 @@
 				7C0DEB9A91863BBE4C144169 /* SavingsGoalsView.swift in Sources */,
 				7C0DEE5877CB9792C42D6086 /* SavingsGoalViews.swift in Sources */,
 				7C0DE53C6B8DE73F3F65C5BE /* SavingsGoals.swift in Sources */,
+				7C0DE2193C318083601369FF /* PlaidSyncReportView.swift in Sources */,
+				7C0DE66D806F397FB72CE23D /* PlaidSyncApply.swift in Sources */,
 				93878AF8C1CD17AC49BD4B47 /* AccountsView.swift in Sources */,
 				CD48D6D3A15DD2DDD7067A5C /* ScheduledView.swift in Sources */,
 				8CFF2BC649F61ABC3AAD147B /* CategoryViews.swift in Sources */,

@@ -153,6 +153,7 @@ final class BackupCoordinator {
 // MARK: - Plaid bank connections
 
 struct PlaidSettingsSection: View {
+    @State private var showingReport = false
     @Environment(\.modelContext) private var context
     @Query(sort: \Account.name) private var accounts: [Account]
     @AppStorage(PlaidClient.envKey) private var envRaw = PlaidClient.Environment.sandbox.rawValue
@@ -169,6 +170,8 @@ struct PlaidSettingsSection: View {
         Section("Bank connections (Plaid)") {
             Text("Connect your banks through Plaid to download transactions and balances automatically. Your Plaid keys and the bank access tokens stay in this Mac's Keychain; the iPhone gets the data through iCloud.")
                 .font(.caption).foregroundStyle(.secondary)
+            Button("Show Last Sync…") { showingReport = true }
+                .sheet(isPresented: $showingReport) { PlaidSyncReportView() }
             Picker("Environment", selection: $envRaw) {
                 Text("Sandbox (fake banks, for testing)").tag(PlaidClient.Environment.sandbox.rawValue)
                 Text("Production (your real banks)").tag(PlaidClient.Environment.production.rawValue)

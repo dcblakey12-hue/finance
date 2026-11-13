@@ -252,6 +252,12 @@ final class TransactionRecord {
     /// The account an imported transaction came from, if you moved it to another account,
     /// so importing the same file again still recognizes it. Nil when it was never moved.
     var sourceAccountId: String? = nil
+    /// A bank transaction that hasn't posted yet (Plaid "pending"). The bank's balance doesn't include
+    /// it, so it's left out of balances here too; it turns into the posted transaction when that arrives.
+    var isPending: Bool = false
+    /// For a hand-entered transaction: the bank's pending transaction (Plaid id) that is the same purchase.
+    /// It stays outstanding until the bank posts it, then the posted transaction replaces it.
+    var bankPendingId: String? = nil
 
     init(id: UUID = UUID(), fitid: String, accountId: String, accountName: String, date: Date, name: String, amount: Double, type: TransactionType, category: String = "Uncategorized", memo: String = "") {
         self.id = id; self.fitid = fitid; self.accountId = accountId; self.accountName = accountName

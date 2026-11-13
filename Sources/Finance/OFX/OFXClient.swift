@@ -200,6 +200,8 @@ struct PlaidTransactionDTO: Codable, Equatable {
     var name: String
     var merchant_name: String?
     var pending: Bool
+    /// For a posted transaction: the pending one it replaces (Plaid sends that one as removed).
+    var pending_transaction_id: String? = nil
 }
 
 /// Pure conversion and matching, separate from networking so it can be tested.
@@ -212,8 +214,9 @@ enum PlaidMapping {
         return calendar.date(from: DateComponents(year: p[0], month: p[1], day: p[2], hour: 12))
     }
 
-    static func convert(_ t: PlaidTransactionDTO, accountId: String, calendar: Calendar = .current) -> OFXTransaction? {
-        guard !t.pending, let d = date(t.date, calendar: calendar) else { return nil }
+    /// A posted transaction as an import row (nil for pending ones, unless `allowPending`).
+    static func convert(_ t: PlaidTransactionDTO, accountId: String, allowPending: Bool = false, calendar: Calendar = .current) -> OFXTransaction? {
+        guard allowPending || !t.pending, let d = date(t.date, calendar: calendar) else { return nil }
         let signed = -t.amount
         let name = (t.merchant_name?.isEmpty == false ? t.merchant_name! : t.name)
         return OFXTransaction(fitid: prefix + t.transaction_id, accountId: accountId, date: d, name: name, amount: signed,
@@ -370,7 +373,8 @@ struct PlaidClient {
                 guard let id = d["transaction_id"] as? String, let acct = d["account_id"] as? String,
                       let amt = d["amount"] as? Double, let date = d["date"] as? String, let name = d["name"] as? String else { return nil }
                 return PlaidTransactionDTO(transaction_id: id, account_id: acct, amount: amt, date: date, name: name,
-                                           merchant_name: d["merchant_name"] as? String, pending: d["pending"] as? Bool ?? false)
+                                           merchant_name: d["merchant_name"] as? String, pending: d["pending"] as? Bool ?? false,
+                                           pending_transaction_id: d["pending_transaction_id"] as? String)
             }
         }
         guard let next = r["next_cursor"] as? String else { throw PlaidError.badResponse }
@@ -413,6 +417,13 @@ final class SyncCoordinator: ObservableObject {
 
     func syncAll(in context: ModelContext) {
         guard !busy, reconnecting == nil, hasBanks else { return }
+        // Earlier versions skipped pending transactions, and Plaid only sends each one once. Download
+        // everything again one time so the pending ones come down (anything already here is skipped).
+        let pendingKey = "plaid.resyncedForPending"
+        if !UserDefaults.standard.bool(forKey: pendingKey) {
+            PlaidStore.resetCursors()
+            UserDefaults.standard.set(true, forKey: pendingKey)
+        }
         busy = true; status = "Syncing…"
         Task {
             var lines: [String] = []
@@ -576,32 +587,13 @@ enum PlaidSync {
             if !page.hasMore { break }
         }
 
-        let all = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
-        var byFitid = Dictionary(all.map { ($0.fitid, $0) }, uniquingKeysWith: { a, _ in a })
-        // Removed by the bank.
-        var removedCount = 0
-        for id in removed { if let r = byFitid[PlaidMapping.prefix + id] { context.delete(r); byFitid[r.fitid] = nil; removedCount += 1 } }
-        // Changed: update in place (keeps your category).
-        var modifiedCount = 0
-        for t in modified {
-            guard let acct = map[t.account_id], let o = PlaidMapping.convert(t, accountId: acct) else { continue }
-            if let r = byFitid[o.fitid] { PlaidMapping.applyModified(o, to: r); modifiedCount += 1 }
-            else { added.append(t) }
-        }
-        // New: group per destination account, skipping ones already imported from files.
-        var insertedCount = 0, matchedCount = 0
-        for (plaidAcct, target) in map {
-            let incoming = added.filter { $0.account_id == plaidAcct && byFitid[PlaidMapping.prefix + $0.transaction_id] == nil }
-                .compactMap { PlaidMapping.convert($0, accountId: target) }
-            guard !incoming.isEmpty else { continue }
-            let existing = all.filter { $0.accountId == target && !$0.fitid.isEmpty }
-            let split = PlaidMapping.splitKnown(incoming, existing: existing)
-            for (rec, fitid) in split.adopt { rec.fitid = fitid; matchedCount += 1 }
-            let name = item.accounts.first { $0.accountId == plaidAcct }?.name ?? "Account"
-            let parsed = ParsedOFXFile(bankId: item.institution, accountId: target, accountName: name, balance: nil,
-                                       transactions: split.new, isCreditCard: item.accounts.first { $0.accountId == plaidAcct }?.type == "credit")
-            insertedCount += TransactionImportService().importParsed(parsed, into: context).inserted
-        }
+        var report = PlaidSyncReport(institution: item.institution, date: Date())
+        let names = Dictionary(item.accounts.map { pa in
+            (map[pa.accountId] ?? "", accountsNow.first { $0.accountId == map[pa.accountId] }?.name ?? pa.name) },
+            uniquingKeysWith: { a, _ in a })
+        apply(added: added, modified: modified, removed: removed, map: map, accountNames: names,
+              institution: item.institution, creditAccounts: Set(item.accounts.filter { $0.type == "credit" }.map(\.accountId)),
+              report: &report, in: context)
         // The bank's balance plus hand-entered transactions (e.g. typed in on the phone) it hasn't reported yet.
         let remaining = (try? context.fetch(FetchDescriptor<TransactionRecord>())) ?? []
         for a in (try? context.fetch(FetchDescriptor<Account>())) ?? [] {
@@ -619,10 +611,7 @@ enum PlaidSync {
         item.lastSync = Date()
         items[idx] = item
         PlaidStore.save(items)
-        var msg = "\(item.institution): \(insertedCount) new"
-        if matchedCount > 0 { msg += ", \(matchedCount) matched to transactions you already had" }
-        if modifiedCount > 0 { msg += ", \(modifiedCount) updated" }
-        if removedCount > 0 { msg += ", \(removedCount) removed" }
-        return msg + "."
+        PlaidSyncReport.save(report)
+        return report.summary
     }
 }

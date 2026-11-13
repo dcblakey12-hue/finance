@@ -38,6 +38,7 @@ struct ContentView: View {
     @State private var isDrillDown = false
     /// Screen to return to via the Back button after a drill-down; nil when opened from the sidebar.
     @State private var returnTo: AppSection?
+    @State private var showingSyncReport = false
     var body: some View {
         NavigationSplitView {
             List(AppSection.allCases, selection: $selection) { s in
@@ -80,6 +81,7 @@ struct ContentView: View {
         .frame(minWidth: 900, minHeight: 600)
         .billReminders()
         .spendingAlerts()
+        .sheet(isPresented: $showingSyncReport) { PlaidSyncReportView() }
         .environmentObject(sync)
         .task {
             DemoMode.prepare(in: context)
@@ -119,7 +121,11 @@ struct ContentView: View {
                     }
                     if sync.busy { ProgressView().controlSize(.small) }
                     else if !sync.status.isEmpty {
-                        Text(sync.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 360)
+                        Button { showingSyncReport = true } label: {
+                            Text(sync.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 360)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Click to see what the bank sync brought down")
                     }
                     Button { sync.syncAll(in: context) } label: { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
                         .disabled(sync.busy || !sync.hasBanks)
