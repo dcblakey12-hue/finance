@@ -347,6 +347,15 @@ enum DemoData {
                 if monthsAgo == 3 && on(20) { add(DemoData.travelMC, day, "INTEREST CHARGE ON PURCHASES", -8.62, "Fees") }
                 if monthsAgo == 2 && on(5) { add(DemoData.checking, day, "OUT OF NETWORK ATM FEE", -3.50, "Fees") }
 
+                // Things for the spending alerts to find: a double charge, a much bigger fill-up than usual,
+                // and a large one-off purchase.
+                if cal.isDate(day, inSameDayAs: days(-3, from: today)) {
+                    add(DemoData.visa, day, "CORNER BISTRO", -46.80, "Dining")
+                    add(DemoData.visa, day, "CORNER BISTRO", -46.80, "Dining")
+                }
+                if cal.isDate(day, inSameDayAs: days(-5, from: today)) { add(DemoData.visa, day, "QUICKFUEL #2231", -142.60, "Transport") }
+                if cal.isDate(day, inSameDayAs: days(-6, from: today)) { add(DemoData.visa, day, "NORTHGATE APPLIANCES", -689.00, "Shopping") }
+
                 // A few recent purchases left uncategorized, to show categorizing
                 if cal.isDate(day, inSameDayAs: days(-2, from: today)) { add(DemoData.visa, day, "SQ *LUNCHBOX TRUCK", -14.25, "Uncategorized") }
                 if cal.isDate(day, inSameDayAs: days(-1, from: today)) { add(DemoData.visa, day, "POS 4471 ODDS AND ENDS", -27.60, "Uncategorized") }

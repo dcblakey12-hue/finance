@@ -27,6 +27,8 @@ struct DashboardView: View {
     }
     @Query var bills: [RecurringBill]
     @Query var envelopes: [Envelope]
+    private var spendingAlerts = CurrentAlerts()
+    @State private var showingAlerts = false
 
     /// Called with an account's OFX accountId when its row is double-clicked.
     var onOpenAccount: (String) -> Void = { _ in }
@@ -101,6 +103,13 @@ struct DashboardView: View {
                 }
 
                 PlaidAttentionBanner(accounts: allAccounts)
+
+                let alerts = spendingAlerts.alerts
+                if !alerts.isEmpty {
+                    Button { showingAlerts = true } label: { SpendingAlertsBanner(alerts: alerts) }
+                        .buttonStyle(.plain)
+                        .help("See your spending alerts")
+                }
 
                 if !overdue.isEmpty {
                     Label("\(overdue.count) scheduled payment\(overdue.count == 1 ? " is" : "s are") overdue — open Scheduled Transactions to enter or skip \(overdue.count == 1 ? "it" : "them").",
@@ -256,6 +265,14 @@ struct DashboardView: View {
             .padding()
         }
         .navigationTitle("Dashboard")
+        .sheet(isPresented: $showingAlerts) {
+            NavigationStack {
+                SpendingAlertsScreen()
+                    .formStyle(.grouped)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingAlerts = false } } }
+            }
+            .frame(minWidth: 520, minHeight: 480)
+        }
     }
 
     // MARK: - Pieces

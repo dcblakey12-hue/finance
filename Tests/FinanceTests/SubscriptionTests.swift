@@ -102,7 +102,7 @@ final class SubscriptionTests: XCTestCase {
 
     func testDecisionsPersistAndSurviveAPriceRise() throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self, DismissedAlert.self])
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         let context = container.mainContext
         let rows = (5...10).map { charge("STREAMFLIX", -15.49, date(2026, $0, 7)) }
