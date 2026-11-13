@@ -9,6 +9,7 @@ struct ScheduledTab: View {
 
     @State private var editing: EditTarget?
     @State private var entering: EntryTarget?
+    @State private var showingReminders = false
 
     private struct EditTarget: Identifiable { let id = UUID(); let existing: RecurringBill? }
     private var overdueItems: [OverdueItem] { ScheduleService.overdue(schedules) }
@@ -76,7 +77,18 @@ struct ScheduledTab: View {
             }
             .navigationTitle("Scheduled")
             .task { ScheduleService.ensureTracking(in: context) }
-            .toolbar { Button { editing = EditTarget(existing: nil) } label: { Image(systemName: "plus") } }
+            .toolbar {
+                Button { showingReminders = true } label: { Image(systemName: "bell") }
+                Button { editing = EditTarget(existing: nil) } label: { Image(systemName: "plus") }
+            }
+            .sheet(isPresented: $showingReminders) {
+                NavigationStack {
+                    Form { BillRemindersSettings() }
+                        .navigationTitle("Reminders")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingReminders = false } } }
+                }
+            }
             .overlay {
                 if schedules.isEmpty {
                     ContentUnavailableView("Nothing scheduled", systemImage: "calendar.badge.clock",

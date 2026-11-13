@@ -20,6 +20,7 @@ struct SettingsView: View {
                     Button("Leave Demo Mode…") { DemoMode.confirmAndSwitch() }
                 }
             }
+            BillRemindersSettings()
             backupSection
             if !DemoMode.isOn { PlaidSettingsSection() }
             Section("Privacy") {

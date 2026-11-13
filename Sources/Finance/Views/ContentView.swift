@@ -76,6 +76,7 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 600)
+        .billReminders()
         .environmentObject(sync)
         .task {
             DemoMode.prepare(in: context)
