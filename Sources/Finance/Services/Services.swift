@@ -617,6 +617,10 @@ struct BackupFile: Codable, Equatable {
     struct ProfileRow: Codable, Equatable { var id: UUID; var bankName: String; var ofxHomeURL: String; var username: String; var accountId: String; var clientUID: String; var lastSync: Date? }
     struct RuleRow: Codable, Equatable { var merchantKey: String; var category: String; var createdAt: Date; var updatedAt: Date }
     struct CategoryRow: Codable, Equatable { var name: String; var createdAt: Date }
+    struct GoalRow: Codable, Equatable {
+        var id: UUID; var name: String; var target: Double; var targetDate: Date?; var accountId: String?
+        var savedByHand: Double; var contributionsRaw: String; var createdAt: Date; var isArchived: Bool; var symbol: String
+    }
     struct SubscriptionMarkRow: Codable, Equatable { var merchantKey: String; var accountId: String? = nil; var cadenceRaw: String; var amount: Double; var statusRaw: String; var updatedAt: Date }
 
     var format: Int = 1
@@ -630,6 +634,8 @@ struct BackupFile: Codable, Equatable {
     var categories: [CategoryRow]
     /// Your confirmed / dismissed subscriptions. Optional so backups made before it existed still load.
     var subscriptionMarks: [SubscriptionMarkRow]? = nil
+    /// Savings goals. Optional so older backups still load.
+    var goals: [GoalRow]? = nil
 
     var summary: String {
         "\(accounts.count) accounts, \(transactions.count) transactions, \(schedules.count) scheduled, \(envelopes.count) budget lines"
@@ -652,7 +658,8 @@ enum BackupService {
             profiles: all(OFXProfile.self).map { .init(id: $0.id, bankName: $0.bankName, ofxHomeURL: $0.ofxHomeURL, username: $0.username, accountId: $0.accountId, clientUID: $0.clientUID, lastSync: $0.lastSync) },
             rules: all(CategoryRule.self).map { .init(merchantKey: $0.merchantKey, category: $0.category, createdAt: $0.createdAt, updatedAt: $0.updatedAt) },
             categories: all(CustomCategory.self).map { .init(name: $0.name, createdAt: $0.createdAt) },
-            subscriptionMarks: all(SubscriptionMark.self).map { .init(merchantKey: $0.merchantKey, accountId: $0.accountId, cadenceRaw: $0.cadenceRaw, amount: $0.amount, statusRaw: $0.statusRaw, updatedAt: $0.updatedAt) })
+            subscriptionMarks: all(SubscriptionMark.self).map { .init(merchantKey: $0.merchantKey, accountId: $0.accountId, cadenceRaw: $0.cadenceRaw, amount: $0.amount, statusRaw: $0.statusRaw, updatedAt: $0.updatedAt) },
+            goals: all(SavingsGoal.self).map { .init(id: $0.id, name: $0.name, target: $0.target, targetDate: $0.targetDate, accountId: $0.accountId, savedByHand: $0.savedByHand, contributionsRaw: $0.contributionsRaw, createdAt: $0.createdAt, isArchived: $0.isArchived, symbol: $0.symbol) })
     }
 
     static func encode(_ file: BackupFile) throws -> Data {
@@ -668,7 +675,7 @@ enum BackupService {
     static func wipe(in context: ModelContext) {
         func clear<T: PersistentModel>(_: T.Type) { for x in (try? context.fetch(FetchDescriptor<T>())) ?? [] { context.delete(x) } }
         clear(TransactionRecord.self); clear(Account.self); clear(Envelope.self); clear(RecurringBill.self)
-        clear(OFXProfile.self); clear(CategoryRule.self); clear(CustomCategory.self); clear(SubscriptionMark.self)
+        clear(OFXProfile.self); clear(CategoryRule.self); clear(CustomCategory.self); clear(SubscriptionMark.self); clear(SavingsGoal.self)
         try? context.save()
     }
 
@@ -701,6 +708,12 @@ enum BackupService {
         }
         for r in file.rules { context.insert(CategoryRule(merchantKey: r.merchantKey, category: r.category, now: r.createdAt)); }
         for c in file.categories { context.insert(CustomCategory(name: c.name, createdAt: c.createdAt)) }
+        for g in file.goals ?? [] {
+            let goal = SavingsGoal(id: g.id, name: g.name, target: g.target, targetDate: g.targetDate, accountId: g.accountId,
+                                   symbol: g.symbol, createdAt: g.createdAt)
+            goal.savedByHand = g.savedByHand; goal.contributionsRaw = g.contributionsRaw; goal.isArchived = g.isArchived
+            context.insert(goal)
+        }
         for m in file.subscriptionMarks ?? [] {
             let mark = SubscriptionMark(merchantKey: m.merchantKey, accountId: m.accountId ?? "", cadence: .monthly, amount: m.amount, status: .confirmed, now: m.updatedAt)
             mark.cadenceRaw = m.cadenceRaw; mark.statusRaw = m.statusRaw; context.insert(mark)

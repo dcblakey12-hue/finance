@@ -29,6 +29,7 @@ struct FinanceApp: App {
             CategoryRule.self,
             CustomCategory.self,
             SubscriptionMark.self,
+            SavingsGoal.self,
         ])
         // Demo mode: made-up data in its own file and its own iCloud container; your real store is not opened (see DemoMode).
         if DemoMode.isOn {

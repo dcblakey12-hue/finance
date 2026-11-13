@@ -9,6 +9,7 @@ struct OverviewTab: View {
     @Query(sort: \TransactionRecord.date, order: .reverse) private var allTransactions: [TransactionRecord]
     @Query private var bills: [RecurringBill]
     @Query private var subscriptionMarks: [SubscriptionMark]
+    @Query(sort: \SavingsGoal.createdAt) private var goals: [SavingsGoal]
 
     /// Accounts the overview covers (comma-separated accountIds; empty = all).
     @AppStorage("overview.accountIds") private var accountIdsRaw = ""
@@ -244,6 +245,8 @@ struct OverviewTab: View {
                                 }
                             }.buttonStyle(.plain)
                         }
+                        case .goals:
+                        card("Savings goals") { GoalsOverviewContent(goals: goals, accounts: allAccounts, transactions: allTransactions) }
                         case .cloud:
                         card("iCloud sync") {
                             Button { cloud.checkNow(context: context) } label: {
@@ -340,7 +343,7 @@ struct OverviewTab: View {
 }
 
 enum OverviewCard: String, CaseIterable, Identifiable {
-    case tiles, cash, coming, netWorth, spending, subscriptions, reports, cloud
+    case tiles, cash, coming, netWorth, spending, subscriptions, goals, reports, cloud
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -350,6 +353,7 @@ enum OverviewCard: String, CaseIterable, Identifiable {
         case .netWorth: return "Net worth"
         case .spending: return "Spent in the last 30 days"
         case .subscriptions: return "Subscriptions"
+        case .goals: return "Savings goals"
         case .reports: return "Year in Review and reports"
         case .cloud: return "iCloud sync"
         }

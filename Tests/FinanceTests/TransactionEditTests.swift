@@ -10,7 +10,7 @@ final class TransactionEditTests: XCTestCase {
 
     override func setUp() async throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self, SavingsGoal.self])
         container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         context = ModelContext(container)
     }

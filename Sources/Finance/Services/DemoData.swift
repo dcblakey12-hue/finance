@@ -442,8 +442,22 @@ enum DemoData {
             let categories = DemoData.categories.map {
                 BackupFile.CategoryRow(name: $0, createdAt: start)
             }
+            // Savings goals: two that follow a savings account, one tracked by hand.
+            let nextJune = cal.nextDate(after: today, matching: DateComponents(month: 6, day: 15), matchingPolicy: .nextTime) ?? today
+            let laptopStart = cal.date(byAdding: .month, value: -4, to: today) ?? today
+            let laptopAdds: [(Date, Double)] = (0..<4).map { (cal.date(byAdding: .month, value: $0, to: laptopStart) ?? today, $0 == 0 ? 200 : 150) }
+            let goals: [BackupFile.GoalRow] = [
+                .init(id: UUID(), name: "Summer trip", target: 3000, targetDate: nextJune, accountId: DemoData.vacation.id,
+                      savedByHand: 0, contributionsRaw: "", createdAt: start, isArchived: false, symbol: "airplane"),
+                .init(id: UUID(), name: "Emergency fund", target: 25000, targetDate: nil, accountId: DemoData.savings.id,
+                      savedByHand: 0, contributionsRaw: "", createdAt: start, isArchived: false, symbol: "umbrella"),
+                .init(id: UUID(), name: "New laptop", target: 1800, targetDate: cal.date(byAdding: .month, value: 5, to: today),
+                      accountId: nil, savedByHand: laptopAdds.reduce(0) { $0 + $1.1 },
+                      contributionsRaw: SavingsGoalService.serialize(laptopAdds.map { (date: $0.0, amount: $0.1) }),
+                      createdAt: laptopStart, isArchived: false, symbol: "laptopcomputer"),
+            ]
             return BackupFile(createdAt: createdAt, accounts: accounts, transactions: txs, envelopes: envelopes(),
-                              schedules: schedules(), profiles: [], rules: rules, categories: categories)
+                              schedules: schedules(), profiles: [], rules: rules, categories: categories, goals: goals)
         }
     }
 }
