@@ -9,7 +9,7 @@ final class ReconciliationTests: XCTestCase {
 
     override func setUp() async throws {
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self, DismissedAlert.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self, DismissedAlert.self, SavingsGoal.self])
         let container = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         context = ModelContext(container)
         acct = Account(name: "Checking", type: .checking, accountId: "chk", bankName: "B", balance: 1000)
@@ -128,7 +128,7 @@ final class ReconciliationTests: XCTestCase {
         XCTAssertEqual(decoded.transactions.filter { $0.reconciledByHand == true }.count, 1)
 
         let schema = Schema([Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self, DismissedAlert.self])
+                             OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self, DismissedAlert.self, SavingsGoal.self])
         let other = ModelContext(try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]))
         BackupService.restore(decoded, in: other)
         let restored = try other.fetch(FetchDescriptor<TransactionRecord>())

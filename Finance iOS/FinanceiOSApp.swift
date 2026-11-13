@@ -28,7 +28,7 @@ struct FinanceiOSApp: App {
 final class Stores {
     static let schema = Schema([
         Account.self, TransactionRecord.self, Envelope.self, RecurringBill.self,
-        OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self, DismissedAlert.self,
+        OFXProfile.self, CategoryRule.self, CustomCategory.self, SubscriptionMark.self, DismissedAlert.self, SavingsGoal.self,
     ])
 
     /// Your data. Same switch as the Mac app: a "FinanceCloudContainer" string in this target's Info

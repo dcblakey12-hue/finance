@@ -30,6 +30,7 @@ struct FinanceApp: App {
             CustomCategory.self,
             SubscriptionMark.self,
             DismissedAlert.self,
+            SavingsGoal.self,
         ])
         // Demo mode: made-up data in its own file and its own iCloud container; your real store is not opened (see DemoMode).
         if DemoMode.isOn {
